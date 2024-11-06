@@ -7,6 +7,7 @@ use luisa::lang::types::vector::{Vec2, Vec3};
 use sefirot::prelude::*;
 use sefirot_testbed::App;
 use sefirot_testbed::KeyCode;
+use sefirot_testbed::MouseButton;
 use utils::pcgf;
 
 mod utils;
@@ -80,14 +81,15 @@ struct Grid {
 
 impl Grid {
     fn first_level() -> Self {
+        let c = 10.0;
         Self {
-            origin: FVec2::new(256.0, 256.0),
-            axis_x: FVec2::new(2.0, 0.0),
-            axis_y: FVec2::new(0.0, 2.0),
+            origin: FVec2::new(1024.0, 1024.0),
+            axis_x: FVec2::new(1.0, 0.0) * c,
+            axis_y: FVec2::new(0.0, 1.0) * c,
             size: UVec2::new(128, 128),
             ray_angle: TAU / 4.0,
             angle_resolution: 4,
-            ray_interval: FVec2::new(1.0, 2.0) * 2.0,
+            ray_interval: FVec2::new(4.0, 8.0) * c,
         }
     }
     fn ray_dir(&self) -> FVec2 {
@@ -99,8 +101,8 @@ impl Grid {
     fn from_world(&self, pos: FVec2) -> FVec2 {
         let local = pos - self.origin;
         FVec2::new(
-            local.dot(self.axis_x) / self.axis_x.length(),
-            local.dot(self.axis_y) / self.axis_y.length(),
+            local.dot(self.axis_x.normalize()) / self.axis_x.length(),
+            local.dot(self.axis_y.normalize()) / self.axis_y.length(),
         )
     }
     fn split_level(&self, left: bool) -> Self {
@@ -110,8 +112,9 @@ impl Grid {
         let next_axis_x_dir = FVec2::from_angle(next_angle + TAU / 4.0);
         let next_axis_x =
             self.axis_x.length_squared() / next_axis_x_dir.dot(self.axis_x) * next_axis_x_dir;
-        let next_axis_y = (self.axis_y * (next_axis_x.length() / self.axis_y.dot(next_axis_x_dir)))
-            .project_onto_normalized(FVec2::from_angle(next_angle));
+        let next_axis_y = (self.axis_y
+            * (next_axis_x.length() / self.axis_y.dot(next_axis_x_dir).abs()))
+        .project_onto_normalized(FVec2::from_angle(next_angle));
         let next_ray_interval = self.ray_interval * 2.0;
         let next_size = UVec2::new(self.size.x, self.size.y / 2);
         let next_origin = self.origin - self.axis_y.normalize() * self.ray_interval.x
@@ -129,9 +132,9 @@ impl Grid {
 }
 
 fn main() {
-    let grid_size = [512, 512];
+    let grid_size = [2048, 2048];
     let app = App::new("Amitabha", grid_size)
-        .scale(4)
+        .scale(1)
         .dpi(2.0)
         .agx()
         .init();
@@ -156,13 +159,13 @@ fn main() {
         );
     }));
 
-    let draw_grid = DEVICE.create_kernel::<fn(Vec2<f32>, Vec2<f32>, Vec2<f32>)>(&track!(
-        |origin, axis_x, axis_y| {
+    let draw_grid = DEVICE.create_kernel::<fn(Vec2<f32>, Vec2<f32>, Vec2<f32>, Vec3<f32>)>(
+        &track!(|origin, axis_x, axis_y, color| {
             let cell = dispatch_id().xy().cast_i32() - dispatch_size().xy().cast_i32() / 2;
             let pos = origin + axis_x * cell.x.cast_f32() + axis_y * cell.y.cast_f32();
-            app.display().write(pos.cast_u32(), Vec3::splat_expr(1.0));
-        }
-    ));
+            app.display().write(pos.cast_u32(), color);
+        }),
+    );
     let draw_line_t = DEVICE.create_kernel::<fn(Vec2<f32>, Vec2<f32>, Vec3<f32>)>(&track!(
         |start, end, color| {
             let t = dispatch_id().x.cast_f32() / dispatch_size().x.cast_f32();
@@ -175,54 +178,126 @@ fn main() {
     };
 
     let colors = [
-        Vec3::new(1.0, 0.0, 0.0),
-        Vec3::new(0.0, 1.0, 0.0),
-        Vec3::new(0.0, 0.0, 1.0),
+        Vec3::new(2.0, 0.0, 0.0),
+        Vec3::new(0.0, 2.0, 0.0),
+        Vec3::new(0.0, 0.0, 2.0),
         Vec3::new(1.0, 1.0, 0.0),
+        Vec3::new(1.0, 0.0, 1.0),
+        Vec3::new(0.0, 1.0, 1.0),
+        Vec3::new(1.0, 1.0, 1.0),
     ];
 
-    let mut all_rays = vec![];
-    let mut rays = vec![(Grid::first_level(), IVec2::new(0, 0))];
+    // println!("All rays: {:#?}", all_rays);
 
-    for c in 0..1 {
-        let mut next_rays = vec![];
-        for &(grid, coords) in &rays {
-            let pos = grid.to_world(coords.as_vec2());
-            let end = pos + grid.ray_dir() * (grid.ray_interval.y - grid.ray_interval.x);
-            all_rays.push((pos, end, colors[c]));
-            for l in [false, true] {
-                let next_grid = grid.split_level(l);
-                let next_pos = pos - grid.ray_dir() * grid.ray_interval.x
-                    + next_grid.ray_dir() * next_grid.ray_interval.x;
-                println!("Next pos: {:?}", next_pos);
-                let next_coords = next_grid.from_world(next_pos);
-                // assert!(next_coords.x.fract() < 0.01);
-                next_rays.push((next_grid, next_coords.round().as_ivec2()));
-                println!("Next: {:?}", next_coords);
-                println!("Next grid: {:#?}", next_grid);
-
-                println!("Pos (rev): {:?}", grid.to_world(next_coords));
-            }
-        }
-        rays = next_rays;
-    }
-
-    println!("All rays: {:#?}", all_rays);
-
-    let mut grid = Grid::first_level();
+    let grid = Grid::first_level();
+    // .split_level(false)
+    // .split_level(true)
+    // .split_level(false);
+    let mut start_pos = FVec2::new(1024.0, 1024.0);
 
     app.run(|rt, scope| {
-        if rt.just_pressed_key(KeyCode::Equal) {
-            println!("Last: {:?}", grid);
-            grid = grid.split_level(false);
+        // if rt.just_pressed_key(KeyCode::Equal) {
+        //     println!("Last: {:?}", grid);
+        //     grid = grid.split_level(false);
+        // }
+
+        if rt.pressed_button(MouseButton::Left) {
+            start_pos = rt.cursor_position.into();
         }
 
-        // draw_grid.dispatch(
-        //     [grid.size.x, grid.size.y, 1],
-        //     &Vec2::from(grid.origin),
-        //     &Vec2::from(grid.axis_x),
-        //     &Vec2::from(grid.axis_y),
-        // );
+        let mut all_rays = vec![];
+
+        let mut rays = vec![(grid, grid.from_world(start_pos).round().as_ivec2())];
+
+        // println!("Start pos: {:?}, {:?}", start_pos, rays[0].1);
+
+        for c in 0..7 {
+            let mut next_rays = vec![];
+            for &(grid, coords) in &rays {
+                let pos = grid.to_world(coords.as_vec2());
+                // println!("Pos: {:?}", pos);
+                let end = pos + grid.ray_dir() * (grid.ray_interval.y - grid.ray_interval.x);
+                all_rays.push((pos, end, colors[c]));
+                for l in [false, true] {
+                    let next_grid = grid.split_level(l);
+                    let next_pos = pos - grid.ray_dir() * grid.ray_interval.x
+                        + next_grid.ray_dir() * next_grid.ray_interval.x;
+                    // println!("Next pos: {:?}", next_pos);
+                    let next_coords = next_grid.from_world(next_pos);
+
+                    let (nc_a, nc_b) = if !l {
+                        (
+                            FVec2::new(next_coords.x.floor(), next_coords.y.floor()),
+                            FVec2::new(next_coords.x.ceil(), next_coords.y.ceil()),
+                        )
+                    } else {
+                        (
+                            FVec2::new(next_coords.x.floor(), next_coords.y.ceil()),
+                            FVec2::new(next_coords.x.ceil(), next_coords.y.floor()),
+                        )
+                    };
+
+                    let next_coords_i = next_coords.floor();
+                    // println!("Left: {:?}", l);
+                    // println!("Coords: {:?}", next_coords);
+                    // println!("A, B: {:?}, {:?}", nc_a, nc_b);
+                    // assert!(next_coords.x.fract() < 0.01);
+                    next_rays.push((next_grid, nc_a.as_ivec2()));
+                    next_rays.push((next_grid, nc_b.as_ivec2()));
+                    // println!("Next: {:?}", next_coords);
+                    // println!("Next grid: {:#?}", next_grid);
+
+                    // println!("Pos (rev): {:?}", grid.to_world(next_coords));
+                }
+            }
+            rays = next_rays;
+        }
+
+        for ray in &all_rays {
+            draw_line(ray.0, ray.1, ray.2);
+        }
+
+        /*
+
+        draw_grid.dispatch(
+            [grid.size.x, grid.size.y, 1],
+            &Vec2::from(grid.origin),
+            &Vec2::from(grid.axis_x),
+            &Vec2::from(grid.axis_y),
+            &colors[0],
+        );
+
+        let grid = grid.split_level(false);
+
+        draw_grid.dispatch(
+            [grid.size.x, grid.size.y, 1],
+            &Vec2::from(grid.origin),
+            &Vec2::from(grid.axis_x),
+            &Vec2::from(grid.axis_y),
+            &colors[1],
+        );
+
+        let grid = grid.split_level(false);
+
+        draw_grid.dispatch(
+            [grid.size.x, grid.size.y, 1],
+            &Vec2::from(grid.origin),
+            &Vec2::from(grid.axis_x),
+            &Vec2::from(grid.axis_y),
+            &colors[2],
+        );
+
+        let grid = grid.split_level(false);
+
+        draw_grid.dispatch(
+            [grid.size.x, grid.size.y, 1],
+            &Vec2::from(grid.origin),
+            &Vec2::from(grid.axis_x),
+            &Vec2::from(grid.axis_y),
+            &colors[3],
+        );
+
+         */
 
         //  draw_line(
         //      grid.origin + grid.ray_dir() * grid.ray_interval.x,
