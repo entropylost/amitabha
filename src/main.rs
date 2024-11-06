@@ -80,14 +80,15 @@ struct Grid {
 }
 
 impl Grid {
-    fn first_level() -> Self {
-        let c = 10.0;
+    fn first_level(ray_angle: f32) -> Self {
+        let c = 4.0;
+        let ray_dir = FVec2::from_angle(ray_angle) * c;
         Self {
-            origin: FVec2::new(1024.0, 1024.0),
-            axis_x: FVec2::new(1.0, 0.0) * c,
-            axis_y: FVec2::new(0.0, 1.0) * c,
+            origin: FVec2::new(1024.0, 1024.0) + ray_dir * 4.0,
+            axis_x: FVec2::new(ray_dir.y, -ray_dir.x),
+            axis_y: ray_dir,
             size: UVec2::new(128, 128),
-            ray_angle: TAU / 4.0,
+            ray_angle,
             angle_resolution: 4,
             ray_interval: FVec2::new(4.0, 8.0) * c,
         }
@@ -189,10 +190,6 @@ fn main() {
 
     // println!("All rays: {:#?}", all_rays);
 
-    let grid = Grid::first_level();
-    // .split_level(false)
-    // .split_level(true)
-    // .split_level(false);
     let mut start_pos = FVec2::new(1024.0, 1024.0);
 
     app.run(|rt, scope| {
@@ -207,47 +204,46 @@ fn main() {
 
         let mut all_rays = vec![];
 
-        let mut rays = vec![(grid, grid.from_world(start_pos).round().as_ivec2())];
+        let mut rays = (0..4)
+            .map(|i| {
+                let grid = Grid::first_level(i as f32 * TAU / 4.0);
+                (
+                    grid,
+                    grid.from_world(start_pos + grid.axis_y.normalize() * grid.ray_interval.x)
+                        .round()
+                        .as_ivec2(),
+                )
+            })
+            .collect::<Vec<_>>();
 
         // println!("Start pos: {:?}, {:?}", start_pos, rays[0].1);
 
-        for c in 0..7 {
+        for c in 0..6 {
             let mut next_rays = vec![];
             for &(grid, coords) in &rays {
                 let pos = grid.to_world(coords.as_vec2());
-                // println!("Pos: {:?}", pos);
                 let end = pos + grid.ray_dir() * (grid.ray_interval.y - grid.ray_interval.x);
                 all_rays.push((pos, end, colors[c]));
                 for l in [false, true] {
                     let next_grid = grid.split_level(l);
                     let next_pos = pos - grid.ray_dir() * grid.ray_interval.x
                         + next_grid.ray_dir() * next_grid.ray_interval.x;
-                    // println!("Next pos: {:?}", next_pos);
                     let next_coords = next_grid.from_world(next_pos);
 
                     let (nc_a, nc_b) = if !l {
                         (
                             FVec2::new(next_coords.x.floor(), next_coords.y.floor()),
-                            FVec2::new(next_coords.x.ceil(), next_coords.y.ceil()),
+                            FVec2::new(next_coords.x.floor() + 1.0, next_coords.y.floor() + 1.0),
                         )
                     } else {
                         (
-                            FVec2::new(next_coords.x.floor(), next_coords.y.ceil()),
-                            FVec2::new(next_coords.x.ceil(), next_coords.y.floor()),
+                            FVec2::new(next_coords.x.floor(), next_coords.y.floor() + 1.0),
+                            FVec2::new(next_coords.x.floor() + 1.0, next_coords.y.floor()),
                         )
                     };
 
-                    let next_coords_i = next_coords.floor();
-                    // println!("Left: {:?}", l);
-                    // println!("Coords: {:?}", next_coords);
-                    // println!("A, B: {:?}, {:?}", nc_a, nc_b);
-                    // assert!(next_coords.x.fract() < 0.01);
                     next_rays.push((next_grid, nc_a.as_ivec2()));
                     next_rays.push((next_grid, nc_b.as_ivec2()));
-                    // println!("Next: {:?}", next_coords);
-                    // println!("Next grid: {:#?}", next_grid);
-
-                    // println!("Pos (rev): {:?}", grid.to_world(next_coords));
                 }
             }
             rays = next_rays;
