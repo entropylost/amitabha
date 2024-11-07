@@ -43,8 +43,8 @@ fn trace(
     interval: Expr<Vec2<f32>>,
 ) -> (Expr<f32>, Expr<bool>) {
     let circles = [
-        (Vec2::new(1024.0, 500.0), 32.0, 10.0),
-        // (Vec2::new(1000.0, 1000.0), 32.0, 0.0),
+        (Vec2::new(1024.0, 800.0), 10.0, 10.0),
+        (Vec2::new(1000.0, 600.0), 32.0, 0.0),
     ];
     let best_t = interval.y.var();
     let best_color = 0.0_f32.var();
@@ -153,8 +153,11 @@ impl Grid2Expr {
     fn ray_dir(&self, angle: Expr<f32>) -> Expr<Vec2<f32>> {
         let angle = self.ray_angle(angle);
         let ray_dir = Vec2::expr(angle.cos(), angle.sin());
-        // let axis = self.axis_y.normalize();
-        ray_dir
+        let axis = self.axis_y.normalize();
+        Vec2::expr(
+            ray_dir.x * axis.x - ray_dir.y * axis.y,
+            ray_dir.y * axis.x + ray_dir.x * axis.y,
+        )
     }
 
     #[tracked]
@@ -191,12 +194,13 @@ impl Grid {
     fn data_size(&self) -> u32 {
         self.size.x * self.size.y * self.angle_resolution
     }
-    fn first_level(ray_dir: FVec2, spacing: f32) -> Self {
-        // let ray_dir = ray_dir * spacing;
-        let axis_x = FVec2::new(0.0, 1.0);
-        let axis_y = FVec2::new(1.0, 0.0);
+    fn first_level(ray_dir: FVec2) -> Self {
+        let axis_x = ray_dir.rotate(FVec2::new(0.0, 1.0));
+        let axis_y = ray_dir.rotate(FVec2::new(1.0, 0.0));
         Self {
-            origin: FVec2::new(100.0, 100.0),
+            origin: FVec2::new(1024.0, 1024.0)
+                - axis_x * BASE_SIZE.x as f32 / 2.0
+                - axis_y * BASE_SIZE.y as f32 / 2.0,
             axis_x,
             axis_y,
             size: BASE_SIZE,
@@ -228,7 +232,7 @@ impl Grid {
 }
 
 fn main() {
-    let num_cascades = 9;
+    let num_cascades = 10;
 
     let grid_size = [2048, 2048];
     let app = App::new("Amitabha", grid_size)
@@ -257,8 +261,8 @@ fn main() {
         );
     }));
 
-    let mut grids_host_lv = (0..1)
-        .map(|i| Grid::first_level(FVec2::from_angle(i as f32 * TAU / 4.0), 1.0))
+    let mut grids_host_lv = (0..4)
+        .map(|i| Grid::first_level(FVec2::from_angle(i as f32 * TAU / 4.0)))
         .collect::<Vec<_>>();
     let mut grids_host = vec![];
     for _c in 0..=num_cascades {
@@ -292,7 +296,7 @@ fn main() {
 
     let storage = GridStorage {
         grids,
-        base_grids: 1,
+        base_grids: 4,
         data,
     };
 
@@ -350,7 +354,7 @@ fn main() {
     let final_display = DEVICE.create_kernel::<fn()>(&track!(|| {
         let pos = dispatch_id().xy().cast_f32();
         let radiance = 0.0_f32.var();
-        for i in 0_u32..1_u32 {
+        for i in 0_u32..4_u32 {
             let grid = storage.grid_at(0.expr(), i);
             let cell = grid.from_world(pos).round().cast_i32();
             *radiance += storage.load_grid(grid, cell, 0_u32.expr());
@@ -359,27 +363,6 @@ fn main() {
             .write(pos.cast_u32(), Vec3::splat_expr(radiance / 4.0));
     }));
 
-    let draw_grid_t = DEVICE.create_kernel::<fn(Vec2<f32>, Vec2<f32>, Vec2<f32>, Vec3<f32>)>(
-        &track!(|origin, axis_x, axis_y, color| {
-            let cell = dispatch_id().xy().cast_i32() - dispatch_size().xy().cast_i32() / 2;
-            let pos = origin + axis_x * cell.x.cast_f32() + axis_y * cell.y.cast_f32();
-            for dx in 0..=1 {
-                for dy in 0..=1 {
-                    app.display()
-                        .write((pos.cast_i32() + Vec2::expr(dx, dy)).cast_u32(), color);
-                }
-            }
-        }),
-    );
-    let draw_grid = |grid: Grid, color: Vec3<f32>| {
-        draw_grid_t.dispatch(
-            [grid.size.x, grid.size.y, 1],
-            &Vec2::from(grid.origin),
-            &Vec2::from(grid.axis_x),
-            &Vec2::from(grid.axis_y),
-            &color,
-        );
-    };
     let draw_line_t = DEVICE.create_kernel::<fn(Vec2<f32>, Vec2<f32>, Vec3<f32>)>(&track!(
         |start, end, color| {
             let t = dispatch_id().x.cast_f32() / dispatch_size().x.cast_f32();
@@ -417,7 +400,7 @@ fn main() {
         if is_tracing {
             trace_kernel.dispatch([grid_size[0], grid_size[1], 1]);
         } else {
-            for dir in 0..1 {
+            for dir in 0..4 {
                 for i in (0..num_cascades).rev() {
                     merge.dispatch([BASE_SIZE.x, BASE_SIZE.y >> i, 1 << i], &i, &dir);
                 }
