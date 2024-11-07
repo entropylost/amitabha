@@ -88,9 +88,36 @@ struct GridStorage {
 }
 impl GridStorage {
     #[tracked]
-    fn grid_at(&self, lv: Expr<u32>, index: Expr<u32>) -> Expr<Grid2> {
-        let offset = self.base_grids * ((1 << lv) - 1);
-        self.grids.read(offset + index)
+    fn grid_at(&self, lv: Expr<u32>, dir: Expr<u32>) -> Expr<Grid2> {
+        let offset = lv * self.base_grids + dir;
+        self.grids.read(offset)
+    }
+
+    #[tracked]
+    fn load_grid(&self, grid: Expr<Grid2>, pos: Expr<Vec2<i32>>, angle: Expr<u32>) -> Expr<f32> {
+        let cell = grid.cell_index(pos, angle);
+        if cell != u32::MAX {
+            self.data.read(cell).color
+        } else {
+            0.0_f32.expr()
+        }
+    }
+
+    #[tracked]
+    fn load_grid_bilinear(
+        &self,
+        grid: Expr<Grid2>,
+        x: Expr<f32>,
+        y: Expr<i32>,
+        angle: Expr<u32>,
+    ) -> Expr<f32> {
+        let x_0 = x.floor().cast_i32();
+        let x_1 = x_0 + 1;
+        let a = x - x_0.cast_f32();
+        let b = 1.0 - a;
+
+        self.load_grid(grid, Vec2::expr(x_0, y), angle) * b
+            + self.load_grid(grid, Vec2::expr(x_1, y), angle) * a
     }
 }
 
@@ -100,26 +127,40 @@ struct Grid2 {
     origin: Vec2<f32>,
     axis_x: Vec2<f32>,
     axis_y: Vec2<f32>,
-    size: Vec2<u32>, // From -x/2=..x/2.
-    ray_angle: f32,
+    size: Vec2<u32>,
     angle_resolution: u32,
-    ray_interval: Vec2<f32>,
     data_offset: u32,
 }
 impl Grid2Expr {
     #[tracked]
-    fn cell_index(&self, cell: Expr<Vec2<i32>>) -> Expr<u32> {
-        let cell = cell + self.size.cast_i32() / 2;
+    fn cell_index(&self, cell: Expr<Vec2<i32>>, angle: Expr<u32>) -> Expr<u32> {
         if (cell < 0).any() || (cell >= self.size.cast_i32()).any() {
             u32::MAX.expr()
         } else {
-            self.data_offset + cell.x.cast_u32() + cell.y.cast_u32() * self.size.x
+            let cell = cell.cast_u32();
+            self.data_offset + cell.x + cell.y * self.size.x + angle * self.size.x * self.size.y
         }
     }
 
     #[tracked]
-    fn ray_dir(&self) -> Expr<Vec2<f32>> {
-        Vec2::expr(self.ray_angle.cos(), self.ray_angle.sin())
+    fn ray_angle(&self, angle: Expr<f32>) -> Expr<f32> {
+        ((angle + 0.5) / self.angle_resolution.cast_f32() - 0.5) * TAU / 4.0
+    }
+
+    #[tracked]
+    fn ray_dir(&self, angle: Expr<f32>) -> Expr<Vec2<f32>> {
+        let angle = self.ray_angle(angle);
+        let ray_dir = Vec2::expr(angle.cos(), angle.sin());
+        let axis = self.axis_y.normalize();
+        Vec2::expr(
+            ray_dir.x * axis.x - ray_dir.y * axis.y,
+            ray_dir.y * axis.x + ray_dir.x * axis.y,
+        )
+    }
+
+    #[tracked]
+    fn ray_len(&self, dir: Expr<Vec2<f32>>) -> Expr<f32> {
+        self.axis_y.length_squared() / (dir.dot(self.axis_y))
     }
 
     #[tracked]
@@ -142,28 +183,31 @@ struct Grid {
     axis_x: FVec2,
     axis_y: FVec2,
     size: UVec2, // From -x..x.
-    ray_angle: f32,
     angle_resolution: u32,
-    ray_interval: FVec2,
 }
 
 const BASE_SIZE: UVec2 = UVec2::new(2048, 2048);
 
 impl Grid {
-    fn first_level(ray_angle: f32, spacing: f32) -> Self {
-        let ray_dir = FVec2::from_angle(ray_angle) * spacing;
+    fn data_size(&self) -> u32 {
+        self.size.x * self.size.y * self.angle_resolution
+    }
+    fn first_level(ray_dir: FVec2, spacing: f32) -> Self {
+        let ray_dir = ray_dir * spacing;
+        let axis_x = FVec2::new(ray_dir.y, -ray_dir.x);
+        let axis_y = ray_dir;
         Self {
-            origin: FVec2::new(1024.0, 1024.0),
-            axis_x: FVec2::new(ray_dir.y, -ray_dir.x),
-            axis_y: ray_dir,
+            origin: FVec2::new(1024.0, 1024.0)
+                - axis_x * BASE_SIZE.x as f32 / 2.0
+                - axis_y * BASE_SIZE.y as f32 / 2.0,
+            axis_x,
+            axis_y,
             size: BASE_SIZE,
-            ray_angle,
-            angle_resolution: 4,
-            ray_interval: FVec2::new(4.0, 8.0) * spacing,
+            angle_resolution: 1,
         }
     }
     fn ray_dir(&self) -> FVec2 {
-        FVec2::from_angle(self.ray_angle)
+        self.axis_y.normalize()
     }
     fn to_world(&self, pos: FVec2) -> FVec2 {
         self.origin + self.axis_x * pos.x + self.axis_y * pos.y
@@ -175,27 +219,13 @@ impl Grid {
             local.dot(self.axis_y.normalize()) / self.axis_y.length(),
         )
     }
-    fn split_level(&self, left: bool) -> Self {
-        let next_angle_resolution = self.angle_resolution * 2;
-        let next_angle = self.ray_angle
-            + TAU / 2.0 / next_angle_resolution as f32 * if left { -1.0 } else { 1.0 };
-        let next_axis_x_dir = FVec2::from_angle(next_angle + TAU / 4.0);
-        let next_axis_x =
-            self.axis_x.length_squared() / next_axis_x_dir.dot(self.axis_x) * next_axis_x_dir;
-        let next_axis_y = (self.axis_y
-            * (next_axis_x.length() / self.axis_y.dot(next_axis_x_dir).abs()))
-        .project_onto_normalized(FVec2::from_angle(next_angle));
-        let next_ray_interval = self.ray_interval * 2.0;
-        let next_size = UVec2::new(self.size.x, self.size.y / 2);
-        let next_origin = self.origin;
+    fn next_level(&self) -> Self {
         Self {
-            origin: next_origin,
-            axis_x: next_axis_x,
-            axis_y: next_axis_y,
-            size: next_size,
-            ray_angle: next_angle,
-            angle_resolution: next_angle_resolution,
-            ray_interval: next_ray_interval,
+            origin: self.origin,
+            axis_x: self.axis_x,
+            axis_y: self.axis_y * 2.0,
+            size: UVec2::new(self.size.x, self.size.y / 2),
+            angle_resolution: self.angle_resolution * 2,
         }
     }
 }
@@ -230,17 +260,15 @@ fn main() {
         );
     }));
 
-    let mut grids_host_lv = (0..4)
-        .map(|i| Grid::first_level(i as f32 * TAU / 4.0, 1.0))
+    let mut grids_host_lv = (0..1)
+        .map(|i| Grid::first_level(FVec2::from_angle(i as f32 * TAU / 4.0), 1.0))
         .collect::<Vec<_>>();
     let mut grids_host = vec![];
     for _c in 0..=num_cascades {
         let mut next_grids = vec![];
         for grid in grids_host_lv {
             grids_host.push(grid);
-            for l in [false, true] {
-                next_grids.push(grid.split_level(l));
-            }
+            next_grids.push(grid.next_level());
         }
         grids_host_lv = next_grids;
     }
@@ -254,12 +282,10 @@ fn main() {
                 axis_x: g.axis_x.into(),
                 axis_y: g.axis_y.into(),
                 size: g.size.into(),
-                ray_angle: g.ray_angle,
                 angle_resolution: g.angle_resolution,
-                ray_interval: g.ray_interval.into(),
                 data_offset: data_size,
             };
-            data_size += g.size.x * g.size.y;
+            data_size += g.data_size();
             grid
         })
         .collect::<Vec<_>>();
@@ -269,80 +295,57 @@ fn main() {
 
     let storage = GridStorage {
         grids,
-        base_grids: 4,
+        base_grids: 1,
         data,
     };
 
-    let merge = DEVICE.create_kernel::<fn(u32)>(&track!(|lv| {
-        let num_grids = 4 << lv;
-        let grid_index = dispatch_id().x / (dispatch_size().x / num_grids);
-        let grid = storage.grid_at(lv, grid_index);
-        let cell = Vec2::expr(
-            dispatch_id().x % (dispatch_size().x / num_grids),
-            dispatch_id().y,
-        )
-        .cast_i32()
-            - grid.size.cast_i32() / 2;
-        let a = dispatch_size().y == grid.size.y && dispatch_size().x / num_grids == grid.size.x;
-        lc_assert!(a);
+    let merge = DEVICE.create_kernel::<fn(u32, u32)>(&track!(|lv, face| {
+        let grid = storage.grid_at(lv, face);
+        let cell = dispatch_id().xy().cast_i32();
+        let angle = dispatch_id().z;
 
-        let data_index = grid.cell_index(cell);
+        let data_index = grid.cell_index(cell, angle);
         let a = data_index != u32::MAX;
         lc_assert!(a);
 
-        let pos = grid.to_world(cell.cast_f32());
-        let start = pos + grid.ray_dir() * grid.ray_interval.x;
+        let next_grid = storage.grid_at(lv + 1, face);
 
-        // let end = pos + grid.ray_dir() * grid.ray_interval.y;
-
-        // let mut ray = trace_between(start, end);
-
-        let mut radiance = 0.0_f32.expr();
-
-        for l in [false, true] {
-            let next_grid = storage.grid_at(lv + 1, grid_index * 2 + l as u32);
-            let next_pos = pos;
-            let next_coords = next_grid.from_world(next_pos);
-
-            let a = next_coords.x - next_coords.x.floor();
-
-            let (nc_a, nc_b) = if !l {
-                (
-                    Vec2::expr(next_coords.x - a, next_coords.y - a),
-                    Vec2::expr(next_coords.x + 1.0 - a, next_coords.y + 1.0 - a),
-                )
-            } else {
-                (
-                    Vec2::expr(next_coords.x - a, next_coords.y - (1.0 - a)),
-                    Vec2::expr(next_coords.x + 1.0 - a, next_coords.y + a),
-                )
-            };
-
-            let trace_a = trace_between(
-                start,
-                next_grid.to_world(nc_a) + next_grid.ray_dir() * grid.ray_interval.y,
-            );
-            let trace_b = trace_between(
-                start,
-                next_grid.to_world(nc_b) + next_grid.ray_dir() * grid.ray_interval.y,
+        let radiance = if cell.y % 2 == 0 {
+            // Grids are directly overlapping.
+            [angle * 2, angle * 2 + 1]
+                .into_iter()
+                .map(|a| storage.load_grid(next_grid, Vec2::expr(cell.x, cell.y / 2), a) / 2.0)
+                .reduce(|a, b| a + b)
+                .unwrap()
+        } else {
+            let dir = grid.ray_dir(angle.cast_f32());
+            let tr = trace(
+                dir,
+                grid.to_world(cell.cast_f32()),
+                Vec2::expr(0.0, grid.ray_len(dir)),
             );
 
-            let data_a = next_grid.cell_index(nc_a.round().cast_i32());
-            let color_a = if data_a != u32::MAX {
-                storage.data.read(data_a).color
-            } else {
-                0.0_f32.expr()
-            };
-            let data_b = next_grid.cell_index(nc_b.round().cast_i32());
-            let color_b = if data_b != u32::MAX {
-                storage.data.read(data_b).color
-            } else {
-                0.0_f32.expr()
-            };
+            let dir_0 = grid.ray_angle(angle.cast_f32() - 0.5);
+            let dir_1 = grid.ray_angle(angle.cast_f32() + 0.5);
 
-            radiance =
-                radiance + 0.5 * (a * over(trace_a, color_a) + (1.0 - a) * over(trace_b, color_b));
-        }
+            let offset_0 = dir_0.tan() * grid.axis_y.length();
+            let offset_1 = dir_1.tan() * grid.axis_y.length();
+
+            let incoming_radiance = storage.load_grid_bilinear(
+                next_grid,
+                cell.x.cast_f32() + offset_0,
+                cell.y / 2 + 1,
+                angle * 2,
+            ) + storage.load_grid_bilinear(
+                next_grid,
+                cell.x.cast_f32() + offset_1,
+                cell.y / 2 + 1,
+                angle * 2 + 1,
+            );
+
+            over(tr, incoming_radiance / 2.0)
+        };
+
         storage.data.write(
             data_index,
             RayData::from_comps_expr(RayDataComps { color: radiance }),
@@ -355,10 +358,7 @@ fn main() {
         for i in 0_u32..4_u32 {
             let grid = storage.grid_at(0.expr(), i);
             let cell = grid.from_world(pos).round().cast_i32();
-            let data_index = grid.cell_index(cell);
-            if data_index != u32::MAX {
-                *radiance += storage.data.read(data_index).color;
-            }
+            *radiance += storage.load_grid(grid, cell, 0_u32.expr());
         }
         app.display()
             .write(pos.cast_u32(), Vec3::splat_expr(radiance / 4.0));
@@ -393,7 +393,12 @@ fn main() {
         }
     ));
     let draw_line = |start: FVec2, end: FVec2, color: Vec3<f32>| {
-        draw_line_t.dispatch([100, 1, 1], &Vec2::from(start), &Vec2::from(end), &color);
+        draw_line_t.dispatch(
+            [(start - end).length().ceil() as u32, 1, 1],
+            &Vec2::from(start),
+            &Vec2::from(end),
+            &color,
+        );
     };
 
     let colors = [
@@ -417,8 +422,10 @@ fn main() {
         if is_tracing {
             trace_kernel.dispatch([grid_size[0], grid_size[1], 1]);
         } else {
-            for i in (0..num_cascades).rev() {
-                merge.dispatch([BASE_SIZE.x * 4 * (1 << i), BASE_SIZE.y >> i, 1], &i);
+            for dir in 0..1 {
+                for i in (0..3).rev() {
+                    merge.dispatch([BASE_SIZE.x, BASE_SIZE.y >> i, 1 << i], &i, &dir);
+                }
             }
             final_display.dispatch([grid_size[0], grid_size[1], 1]);
         }
@@ -428,61 +435,51 @@ fn main() {
         }
 
         if rt.pressed_button(MouseButton::Left) {
-            let mut all_rays = vec![];
+            let pos = FVec2::new(100.0, 1024.0);
+            let factor = 40.0;
 
-            let mut rays = (0..4)
-                .map(|i| {
-                    let grid = Grid::first_level(i as f32 * TAU / 4.0, 8.0);
-                    (
-                        grid,
-                        grid.from_world(rt.cursor_position.into())
-                            .round()
-                            .as_ivec2(),
-                    )
-                })
-                .collect::<Vec<_>>();
+            let mut all_rays = vec![
+                (pos, pos + FVec2::new(1000.0, -1000.0), Vec3::splat(5.0)),
+                (pos, pos + FVec2::new(1000.0, 1000.0), Vec3::splat(5.0)),
+            ];
+
+            let mut rays = vec![(0_u32, FVec2::new(0.0, 0.0))];
 
             for c in 0..5 {
                 let mut next_rays = vec![];
-                for &(grid, coords) in &rays {
-                    let pos = grid.to_world(coords.as_vec2());
-                    let start = pos + grid.ray_dir() * grid.ray_interval.x;
-                    for l in [false, true] {
-                        let next_grid = grid.split_level(l);
-                        let next_pos = pos;
-                        let next_coords = next_grid.from_world(next_pos);
+                for (angle, offset) in rays {
+                    let axis_y = FVec2::new((1 << c) as f32 * factor, 0.0);
 
-                        let (nc_a, nc_b) = if !l {
-                            let ncf = next_coords - next_coords.floor();
-                            let a = ncf.x;
-                            (
-                                FVec2::new(next_coords.x - a, next_coords.y - a),
-                                FVec2::new(next_coords.x + 1.0 - a, next_coords.y + 1.0 - a),
-                            )
-                        } else {
-                            let ncf = next_coords - next_coords.floor();
-                            let a = ncf.x;
-                            (
-                                FVec2::new(next_coords.x - a, next_coords.y - (1.0 - a)),
-                                FVec2::new(next_coords.x + 1.0 - a, next_coords.y + a),
-                            )
-                        };
-                        all_rays.push((
-                            start,
-                            next_grid.to_world(nc_a)
-                                + next_grid.ray_dir() * next_grid.ray_interval.x,
-                            colors[c],
-                        ));
-                        all_rays.push((
-                            start,
-                            next_grid.to_world(nc_b)
-                                + next_grid.ray_dir() * next_grid.ray_interval.x,
-                            colors[c],
-                        ));
+                    let dir_0 =
+                        FVec2::from_angle(((angle as f32) / (1 << c) as f32 - 0.5) * TAU / 4.0);
+                    let dir_1 = FVec2::from_angle(
+                        ((angle as f32 + 1.0) / (1 << c) as f32 - 0.5) * TAU / 4.0,
+                    );
 
-                        next_rays.push((next_grid, nc_a.round().as_ivec2()));
-                        next_rays.push((next_grid, nc_b.round().as_ivec2()));
-                    }
+                    let len_0 = axis_y.length_squared() / (dir_0.dot(axis_y));
+                    let len_1 = axis_y.length_squared() / (dir_1.dot(axis_y));
+
+                    let dir = FVec2::from_angle(
+                        ((angle as f32 + 0.5) / (1 << c) as f32 - 0.5) * TAU / 4.0,
+                    );
+                    let len = axis_y.length_squared() / (dir.dot(axis_y));
+
+                    all_rays.push((pos + offset, pos + offset + dir_0 * len_0, colors[c]));
+                    all_rays.push((pos + offset, pos + offset + dir_1 * len_1, colors[c]));
+                    all_rays.push((
+                        pos + offset - FVec2::new(0.0, 1000.0),
+                        pos + offset + FVec2::new(0.0, 1000.0),
+                        colors[c],
+                    ));
+
+                    next_rays.push((
+                        angle * 2,
+                        offset + dir_0 * len_0, // + FVec2::new(0.0, -1.0) * factor,
+                    ));
+                    next_rays.push((
+                        angle * 2 + 1,
+                        offset + dir_1 * len_1, // + FVec2::new(0.0, 1.0) * factor,
+                    ));
                 }
                 rays = next_rays;
             }
@@ -492,12 +489,14 @@ fn main() {
             }
         }
 
-        if display_grid {
-            let mut grid = Grid::first_level(0.0, 8.0);
-            for c in 0..5 {
-                draw_grid(grid, colors[c]);
-                grid = grid.split_level(c % 2 == 0);
-            }
-        }
+        // if display_grid {
+        //     let mut grid = Grid::first_level(0.0, 8.0);
+        //     for c in 0..5 {
+        //         draw_grid(grid, colors[c]);
+        //         grid = grid.split_level(c % 2 == 0);
+        //     }
+        // }
+
+        // rt.log_fps();
     });
 }
