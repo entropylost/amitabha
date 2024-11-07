@@ -43,7 +43,7 @@ fn trace(
     interval: Expr<Vec2<f32>>,
 ) -> (Expr<f32>, Expr<bool>) {
     let circles = [
-        (Vec2::new(1024.0, 1024.0), 32.0, 10.0),
+        (Vec2::new(1024.0, 500.0), 32.0, 10.0),
         // (Vec2::new(1000.0, 1000.0), 32.0, 0.0),
     ];
     let best_t = interval.y.var();
@@ -153,11 +153,8 @@ impl Grid2Expr {
     fn ray_dir(&self, angle: Expr<f32>) -> Expr<Vec2<f32>> {
         let angle = self.ray_angle(angle);
         let ray_dir = Vec2::expr(angle.cos(), angle.sin());
-        let axis = self.axis_y.normalize();
-        Vec2::expr(
-            ray_dir.x * axis.x - ray_dir.y * axis.y,
-            ray_dir.y * axis.x + ray_dir.x * axis.y,
-        )
+        // let axis = self.axis_y.normalize();
+        ray_dir
     }
 
     #[tracked]
@@ -195,13 +192,11 @@ impl Grid {
         self.size.x * self.size.y * self.angle_resolution
     }
     fn first_level(ray_dir: FVec2, spacing: f32) -> Self {
-        let ray_dir = ray_dir * spacing;
-        let axis_x = FVec2::new(ray_dir.y, -ray_dir.x);
-        let axis_y = ray_dir;
+        // let ray_dir = ray_dir * spacing;
+        let axis_x = FVec2::new(0.0, 1.0);
+        let axis_y = FVec2::new(1.0, 0.0);
         Self {
-            origin: FVec2::new(1024.0, 1024.0)
-                - axis_x * BASE_SIZE.x as f32 / 2.0
-                - axis_y * BASE_SIZE.y as f32 / 2.0,
+            origin: FVec2::new(100.0, 100.0),
             axis_x,
             axis_y,
             size: BASE_SIZE,
@@ -331,19 +326,15 @@ fn main() {
             let offset_0 = dir_0.tan() * grid.axis_y.length() / grid.axis_x.length();
             let offset_1 = dir_1.tan() * grid.axis_y.length() / grid.axis_x.length();
 
-            let incoming_radiance = storage.load_grid(
+            let incoming_radiance = storage.load_grid_bilinear(
                 next_grid,
-                Vec2::expr(
-                    (cell.x.cast_f32() + offset_0).round().cast_i32(),
-                    cell.y / 2 + 1,
-                ),
+                cell.x.cast_f32() + offset_0,
+                cell.y / 2 + 1,
                 angle * 2,
-            ) + storage.load_grid(
+            ) + storage.load_grid_bilinear(
                 next_grid,
-                Vec2::expr(
-                    (cell.x.cast_f32() + offset_1).round().cast_i32(),
-                    cell.y / 2 + 1,
-                ),
+                cell.x.cast_f32() + offset_1,
+                cell.y / 2 + 1,
                 angle * 2 + 1,
             );
 
@@ -359,7 +350,7 @@ fn main() {
     let final_display = DEVICE.create_kernel::<fn()>(&track!(|| {
         let pos = dispatch_id().xy().cast_f32();
         let radiance = 0.0_f32.var();
-        for i in 0_u32..4_u32 {
+        for i in 0_u32..1_u32 {
             let grid = storage.grid_at(0.expr(), i);
             let cell = grid.from_world(pos).round().cast_i32();
             *radiance += storage.load_grid(grid, cell, 0_u32.expr());
@@ -475,7 +466,7 @@ fn main() {
 
                     if cell.y % 2 == 0 {
                         next_rays.push((angle * 2, IVec2::new(cell.x, cell.y / 2)));
-                        // next_rays.push((angle * 2 + 1, IVec2::new(cell.x, cell.y / 2)));
+                        next_rays.push((angle * 2 + 1, IVec2::new(cell.x, cell.y / 2)));
                     } else {
                         let offset_0 = a0.tan() * axis_y.length();
                         let offset_1 = a1.tan() * axis_y.length();
@@ -491,17 +482,17 @@ fn main() {
                                 cell.y / 2 + 1,
                             ),
                         ));
-                        // next_rays.push((
-                        //     angle * 2 + 1,
-                        //     IVec2::new((cell.x as f32 + offset_1).floor() as i32, cell.y / 2 + 1),
-                        // ));
-                        // next_rays.push((
-                        //     angle * 2 + 1,
-                        //     IVec2::new(
-                        //         (cell.x as f32 + offset_1).floor() as i32 + 1,
-                        //         cell.y / 2 + 1,
-                        //     ),
-                        // ));
+                        next_rays.push((
+                            angle * 2 + 1,
+                            IVec2::new((cell.x as f32 + offset_1).floor() as i32, cell.y / 2 + 1),
+                        ));
+                        next_rays.push((
+                            angle * 2 + 1,
+                            IVec2::new(
+                                (cell.x as f32 + offset_1).floor() as i32 + 1,
+                                cell.y / 2 + 1,
+                            ),
+                        ));
                     }
                 }
                 rays = next_rays;
