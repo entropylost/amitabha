@@ -1,4 +1,5 @@
 #![allow(clippy::wrong_self_convention)]
+#![allow(clippy::needless_range_loop)]
 
 use std::f32::consts::TAU;
 
@@ -363,6 +364,27 @@ fn main() {
             .write(pos.cast_u32(), Vec3::splat_expr(radiance / 4.0));
     }));
 
+    let draw_grid_t = DEVICE.create_kernel::<fn(Vec2<f32>, Vec2<f32>, Vec2<f32>, Vec3<f32>)>(
+        &track!(|origin, axis_x, axis_y, color| {
+            let cell = dispatch_id().xy().cast_i32() - dispatch_size().xy().cast_i32() / 2;
+            let pos = origin + axis_x * cell.x.cast_f32() + axis_y * cell.y.cast_f32();
+            for dx in 0..=1 {
+                for dy in 0..=1 {
+                    app.display()
+                        .write((pos.cast_i32() + Vec2::expr(dx, dy)).cast_u32(), color);
+                }
+            }
+        }),
+    );
+    let draw_grid = |grid: Grid, color: Vec3<f32>| {
+        draw_grid_t.dispatch(
+            [grid.size.x, grid.size.y, 1],
+            &Vec2::from(grid.origin),
+            &Vec2::from(grid.axis_x),
+            &Vec2::from(grid.axis_y),
+            &color,
+        );
+    };
     let draw_line_t = DEVICE.create_kernel::<fn(Vec2<f32>, Vec2<f32>, Vec3<f32>)>(&track!(
         |start, end, color| {
             let t = dispatch_id().x.cast_f32() / dispatch_size().x.cast_f32();
@@ -385,6 +407,7 @@ fn main() {
     ];
 
     let mut is_tracing = false;
+    let mut display_grid = false;
 
     app.run(|rt, _scope| {
         if rt.just_pressed_key(KeyCode::Backslash) {
@@ -398,6 +421,10 @@ fn main() {
                 merge.dispatch([BASE_SIZE.x * 4 * (1 << i), BASE_SIZE.y >> i, 1], &i);
             }
             final_display.dispatch([grid_size[0], grid_size[1], 1]);
+        }
+
+        if rt.just_pressed_key(KeyCode::KeyG) {
+            display_grid = !display_grid;
         }
 
         if rt.pressed_button(MouseButton::Left) {
@@ -415,7 +442,6 @@ fn main() {
                 })
                 .collect::<Vec<_>>();
 
-            #[allow(clippy::needless_range_loop)]
             for c in 0..5 {
                 let mut next_rays = vec![];
                 for &(grid, coords) in &rays {
@@ -463,6 +489,14 @@ fn main() {
 
             for ray in &all_rays {
                 draw_line(ray.0, ray.1, ray.2);
+            }
+        }
+
+        if display_grid {
+            let mut grid = Grid::first_level(0.0, 8.0);
+            for c in 0..5 {
+                draw_grid(grid, colors[c]);
+                grid = grid.split_level(c % 2 == 0);
             }
         }
     });
