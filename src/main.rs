@@ -43,7 +43,7 @@ fn trace(
     interval: Expr<Vec2<f32>>,
 ) -> (Expr<f32>, Expr<bool>) {
     let circles = [
-        (Vec2::new(1024.0, 800.0), 10.0, 10.0),
+        (Vec2::new(1024.0, 800.0), 32.0, 10.0),
         (Vec2::new(1000.0, 600.0), 32.0, 0.0),
     ];
     let best_t = interval.y.var();
@@ -357,7 +357,7 @@ fn main() {
         let radiance = 0.0_f32.var();
         for i in 0_u32..4_u32 {
             let grid = storage.grid_at(0.expr(), i);
-            let cell = grid.from_world(pos).round().cast_i32();
+            let cell = grid.from_world(pos + grid.axis_y).round().cast_i32();
             *radiance += storage.load_grid(grid, cell, 0_u32.expr());
         }
         app.display()
@@ -401,12 +401,22 @@ fn main() {
         if is_tracing {
             trace_kernel.dispatch([grid_size[0], grid_size[1], 1]);
         } else {
+            let mut time = 0.0;
             for dir in 0..4 {
-                for i in (0..num_cascades).rev() {
-                    merge.dispatch([BASE_SIZE.x, BASE_SIZE.y >> i, 1 << i], &i, &dir);
-                }
+                let commands = (0..num_cascades)
+                    .rev()
+                    .map(|i| {
+                        merge.dispatch_async([BASE_SIZE.x, BASE_SIZE.y >> i, 1 << i], &i, &dir)
+                    })
+                    .collect::<Vec<_>>()
+                    .chain();
+                let timings = commands.execute_timed();
+                time += timings.iter().map(|(_, t)| t).sum::<f32>();
             }
             final_display.dispatch([grid_size[0], grid_size[1], 1]);
+            if rt.tick % 60 == 0 {
+                println!("Time: {:?}ms", time);
+            }
         }
 
         if rt.just_pressed_key(KeyCode::KeyG) {
@@ -492,6 +502,6 @@ fn main() {
         //     }
         // }
 
-        // rt.log_fps();
+        rt.log_fps();
     });
 }

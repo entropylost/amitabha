@@ -5,5 +5,5 @@ edition = "2021"
 
 [dependencies]
 glam = { version = "0.27.0" }
-sefirot = { path = "../sefirot/sefirot", features = ["glam"] }
+sefirot = { path = "../sefirot/sefirot", features = ["glam", "trace"] }
 sefirot_testbed = { path = "../sefirot/testbed" }
