@@ -232,7 +232,8 @@ impl Grid {
 }
 
 fn main() {
-    let num_cascades = 10;
+    let num_cascades = BASE_SIZE.max_element().trailing_zeros();
+    println!("Num cascades: {}", num_cascades);
 
     let grid_size = [2048, 2048];
     let app = App::new("Amitabha", grid_size)
@@ -360,7 +361,7 @@ fn main() {
             *radiance += storage.load_grid(grid, cell, 0_u32.expr());
         }
         app.display()
-            .write(pos.cast_u32(), Vec3::splat_expr(radiance / 4.0));
+            .write(dispatch_id().xy(), Vec3::splat_expr(radiance / 4.0));
     }));
 
     let draw_line_t = DEVICE.create_kernel::<fn(Vec2<f32>, Vec2<f32>, Vec3<f32>)>(&track!(
@@ -420,8 +421,16 @@ fn main() {
                 .as_ivec2();
 
             let mut all_rays = vec![
-            //     (pos, pos + FVec2::new(1000.0, -1000.0), Vec3::splat(5.0)),
-            //     (pos, pos + FVec2::new(1000.0, 1000.0), Vec3::splat(5.0)),
+                (
+                    cell.yx().as_vec2(),
+                    cell.yx().as_vec2() + FVec2::new(1000.0, -1000.0),
+                    Vec3::splat(5.0),
+                ),
+                (
+                    cell.yx().as_vec2(),
+                    cell.yx().as_vec2() + FVec2::new(1000.0, 1000.0),
+                    Vec3::splat(5.0),
+                ),
             ];
 
             let mut rays = vec![(0_u32, cell)];
@@ -454,28 +463,17 @@ fn main() {
                         let offset_0 = a0.tan() * axis_y.length();
                         let offset_1 = a1.tan() * axis_y.length();
 
-                        next_rays.push((
-                            angle * 2,
-                            IVec2::new((cell.x as f32 + offset_0).floor() as i32, cell.y / 2 + 1),
-                        ));
-                        next_rays.push((
-                            angle * 2,
-                            IVec2::new(
-                                (cell.x as f32 + offset_0).floor() as i32 + 1,
-                                cell.y / 2 + 1,
-                            ),
-                        ));
-                        next_rays.push((
-                            angle * 2 + 1,
-                            IVec2::new((cell.x as f32 + offset_1).floor() as i32, cell.y / 2 + 1),
-                        ));
-                        next_rays.push((
-                            angle * 2 + 1,
-                            IVec2::new(
-                                (cell.x as f32 + offset_1).floor() as i32 + 1,
-                                cell.y / 2 + 1,
-                            ),
-                        ));
+                        let f = (cell.x as f32 + offset_0).floor();
+                        next_rays.push((angle * 2, IVec2::new(f as i32, cell.y / 2 + 1)));
+                        if (cell.x as f32 + offset_0) != f {
+                            next_rays.push((angle * 2, IVec2::new(f as i32 + 1, cell.y / 2 + 1)));
+                        }
+                        let f = (cell.x as f32 + offset_1).floor();
+                        next_rays.push((angle * 2 + 1, IVec2::new(f as i32, cell.y / 2 + 1)));
+                        if (cell.x as f32 + offset_1) != f {
+                            next_rays
+                                .push((angle * 2 + 1, IVec2::new(f as i32 + 1, cell.y / 2 + 1)));
+                        }
                     }
                 }
                 rays = next_rays;
