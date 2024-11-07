@@ -57,15 +57,27 @@ fn trace(
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Value)]
+struct RayData {
+    color: f32,
+}
+
+struct GridStorage {
+    grids: Buffer<Grid2>,
+    base_grids: u32,
+    data: Buffer<RayData>,
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Value)]
 struct Grid2 {
     origin: Vec2<f32>,
     axis_x: Vec2<f32>,
     axis_y: Vec2<f32>,
-    size: Vec2<u32>, // From -x..x.
+    size: Vec2<u32>, // From -x/2=..x/2.
     ray_angle: f32,
     angle_resolution: u32,
     ray_interval: Vec2<f32>,
-    offset: u32,
+    data_offset: u32,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -87,7 +99,7 @@ impl Grid {
             origin: FVec2::new(1024.0, 1024.0) + ray_dir * 4.0,
             axis_x: FVec2::new(ray_dir.y, -ray_dir.x),
             axis_y: ray_dir,
-            size: UVec2::new(128, 128),
+            size: UVec2::new(256, 256),
             ray_angle,
             angle_resolution: 4,
             ray_interval: FVec2::new(4.0, 8.0) * c,
@@ -133,6 +145,8 @@ impl Grid {
 }
 
 fn main() {
+    let num_cascades = 6;
+
     let grid_size = [2048, 2048];
     let app = App::new("Amitabha", grid_size)
         .scale(1)
@@ -159,6 +173,54 @@ fn main() {
             Vec3::splat_expr(total_color / num_dirs as f32),
         );
     }));
+
+    let mut grids_host_lv = (0..4)
+        .map(|i| Grid::first_level(i as f32 * TAU / 4.0))
+        .collect::<Vec<_>>();
+    let mut grids_host = vec![];
+    for _c in 0..num_cascades {
+        let mut next_grids = vec![];
+        for grid in grids_host_lv {
+            grids_host.push(grid);
+            for l in [false, true] {
+                next_grids.push(grid.split_level(l));
+            }
+        }
+        grids_host_lv = next_grids;
+    }
+
+    let mut data_size = 0;
+    let grids_host = grids_host
+        .iter()
+        .map(|g| {
+            let grid = Grid2 {
+                origin: g.origin.into(),
+                axis_x: g.axis_x.into(),
+                axis_y: g.axis_y.into(),
+                size: g.size.into(),
+                ray_angle: g.ray_angle,
+                angle_resolution: g.angle_resolution,
+                ray_interval: g.ray_interval.into(),
+                data_offset: data_size,
+            };
+            data_size += g.size.x * g.size.y;
+            grid
+        })
+        .collect::<Vec<_>>();
+
+    let data = DEVICE.create_buffer_from_fn(data_size as usize, |i| RayData { color: 0.0 });
+    let grids = DEVICE.create_buffer_from_slice(&grids_host);
+
+    let storage = GridStorage {
+        grids,
+        base_grids: 4,
+        data,
+    };
+
+    // let merge = DEVICE.create_kernel::<fn(u32)>(&track!(|lv| {
+    //     let num_grids = 4 << lv;
+    //     let grid = storage.grid_at(lv, )
+    // }));
 
     let draw_grid = DEVICE.create_kernel::<fn(Vec2<f32>, Vec2<f32>, Vec2<f32>, Vec3<f32>)>(
         &track!(|origin, axis_x, axis_y, color| {
@@ -223,7 +285,9 @@ fn main() {
             for &(grid, coords) in &rays {
                 let pos = grid.to_world(coords.as_vec2());
                 let end = pos + grid.ray_dir() * (grid.ray_interval.y - grid.ray_interval.x);
-                all_rays.push((pos, end, colors[c]));
+                if coords.abs().cmplt(grid.size.as_ivec2() / 2).all() {
+                    all_rays.push((pos, end, colors[c]));
+                }
                 for l in [false, true] {
                     let next_grid = grid.split_level(l);
                     let next_pos = pos - grid.ray_dir() * grid.ray_interval.x
