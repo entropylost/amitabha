@@ -3,8 +3,10 @@
 
 use std::f32::consts::TAU;
 
+use glam::IVec2;
 use glam::UVec2;
 use glam::Vec2 as FVec2;
+use glam::Vec2Swizzles;
 use luisa::lang::types::vector::{Vec2, Vec3};
 use sefirot::prelude::*;
 use sefirot_testbed::App;
@@ -41,8 +43,8 @@ fn trace(
     interval: Expr<Vec2<f32>>,
 ) -> (Expr<f32>, Expr<bool>) {
     let circles = [
-        (Vec2::new(800.0, 800.0), 32.0, 10.0),
-        (Vec2::new(1000.0, 1000.0), 32.0, 0.0),
+        (Vec2::new(1024.0, 1024.0), 32.0, 10.0),
+        // (Vec2::new(1000.0, 1000.0), 32.0, 0.0),
     ];
     let best_t = interval.y.var();
     let best_color = 0.0_f32.var();
@@ -312,11 +314,9 @@ fn main() {
 
         let radiance = if cell.y % 2 == 0 {
             // Grids are directly overlapping.
-            [angle * 2, angle * 2 + 1]
-                .into_iter()
-                .map(|a| storage.load_grid(next_grid, Vec2::expr(cell.x, cell.y / 2), a) / 2.0)
-                .reduce(|a, b| a + b)
-                .unwrap()
+            (storage.load_grid(next_grid, Vec2::expr(cell.x, cell.y / 2), angle * 2)
+                + storage.load_grid(next_grid, Vec2::expr(cell.x, cell.y / 2), angle * 2 + 1))
+                / 2.0
         } else {
             let dir = grid.ray_dir(angle.cast_f32());
             let tr = trace(
@@ -328,18 +328,22 @@ fn main() {
             let dir_0 = grid.ray_angle(angle.cast_f32() - 0.5);
             let dir_1 = grid.ray_angle(angle.cast_f32() + 0.5);
 
-            let offset_0 = dir_0.tan() * grid.axis_y.length();
-            let offset_1 = dir_1.tan() * grid.axis_y.length();
+            let offset_0 = dir_0.tan() * grid.axis_y.length() / grid.axis_x.length();
+            let offset_1 = dir_1.tan() * grid.axis_y.length() / grid.axis_x.length();
 
-            let incoming_radiance = storage.load_grid_bilinear(
+            let incoming_radiance = storage.load_grid(
                 next_grid,
-                cell.x.cast_f32() + offset_0,
-                cell.y / 2 + 1,
+                Vec2::expr(
+                    (cell.x.cast_f32() + offset_0).round().cast_i32(),
+                    cell.y / 2 + 1,
+                ),
                 angle * 2,
-            ) + storage.load_grid_bilinear(
+            ) + storage.load_grid(
                 next_grid,
-                cell.x.cast_f32() + offset_1,
-                cell.y / 2 + 1,
+                Vec2::expr(
+                    (cell.x.cast_f32() + offset_1).round().cast_i32(),
+                    cell.y / 2 + 1,
+                ),
                 angle * 2 + 1,
             );
 
@@ -423,7 +427,7 @@ fn main() {
             trace_kernel.dispatch([grid_size[0], grid_size[1], 1]);
         } else {
             for dir in 0..1 {
-                for i in (0..3).rev() {
+                for i in (0..num_cascades).rev() {
                     merge.dispatch([BASE_SIZE.x, BASE_SIZE.y >> i, 1 << i], &i, &dir);
                 }
             }
@@ -435,57 +439,76 @@ fn main() {
         }
 
         if rt.pressed_button(MouseButton::Left) {
-            let pos = FVec2::new(100.0, 1024.0);
+            let corner = FVec2::new(100.0, 100.0);
             let factor = 40.0;
+            let cell = ((FVec2::from(rt.cursor_position).yx() - corner) / factor)
+                .round()
+                .as_ivec2();
 
             let mut all_rays = vec![
-                (pos, pos + FVec2::new(1000.0, -1000.0), Vec3::splat(5.0)),
-                (pos, pos + FVec2::new(1000.0, 1000.0), Vec3::splat(5.0)),
+            //     (pos, pos + FVec2::new(1000.0, -1000.0), Vec3::splat(5.0)),
+            //     (pos, pos + FVec2::new(1000.0, 1000.0), Vec3::splat(5.0)),
             ];
 
-            let mut rays = vec![(0_u32, FVec2::new(0.0, 0.0))];
+            let mut rays = vec![(0_u32, cell)];
+
+            let axis_x = FVec2::new(0.0, 1.0);
 
             for c in 0..5 {
                 let mut next_rays = vec![];
-                for (angle, offset) in rays {
-                    let axis_y = FVec2::new((1 << c) as f32 * factor, 0.0);
-
-                    let dir_0 =
-                        FVec2::from_angle(((angle as f32) / (1 << c) as f32 - 0.5) * TAU / 4.0);
-                    let dir_1 = FVec2::from_angle(
-                        ((angle as f32 + 1.0) / (1 << c) as f32 - 0.5) * TAU / 4.0,
-                    );
-
-                    let len_0 = axis_y.length_squared() / (dir_0.dot(axis_y));
-                    let len_1 = axis_y.length_squared() / (dir_1.dot(axis_y));
+                for (angle, cell) in rays {
+                    let axis_y = FVec2::new((1 << c) as f32, 0.0);
 
                     let dir = FVec2::from_angle(
                         ((angle as f32 + 0.5) / (1 << c) as f32 - 0.5) * TAU / 4.0,
                     );
                     let len = axis_y.length_squared() / (dir.dot(axis_y));
 
-                    all_rays.push((pos + offset, pos + offset + dir_0 * len_0, colors[c]));
-                    all_rays.push((pos + offset, pos + offset + dir_1 * len_1, colors[c]));
+                    let a0 = ((angle as f32) / (1 << c) as f32 - 0.5) * TAU / 4.0;
+                    let a1 = ((angle as f32 + 1.0) / (1 << c) as f32 - 0.5) * TAU / 4.0;
+
                     all_rays.push((
-                        pos + offset - FVec2::new(0.0, 1000.0),
-                        pos + offset + FVec2::new(0.0, 1000.0),
+                        axis_y * cell.y as f32 + axis_x * cell.x as f32,
+                        axis_y * cell.y as f32 + axis_x * cell.x as f32 + dir * len,
                         colors[c],
                     ));
 
-                    next_rays.push((
-                        angle * 2,
-                        offset + dir_0 * len_0, // + FVec2::new(0.0, -1.0) * factor,
-                    ));
-                    next_rays.push((
-                        angle * 2 + 1,
-                        offset + dir_1 * len_1, // + FVec2::new(0.0, 1.0) * factor,
-                    ));
+                    if cell.y % 2 == 0 {
+                        next_rays.push((angle * 2, IVec2::new(cell.x, cell.y / 2)));
+                        // next_rays.push((angle * 2 + 1, IVec2::new(cell.x, cell.y / 2)));
+                    } else {
+                        let offset_0 = a0.tan() * axis_y.length();
+                        let offset_1 = a1.tan() * axis_y.length();
+
+                        next_rays.push((
+                            angle * 2,
+                            IVec2::new((cell.x as f32 + offset_0).floor() as i32, cell.y / 2 + 1),
+                        ));
+                        next_rays.push((
+                            angle * 2,
+                            IVec2::new(
+                                (cell.x as f32 + offset_0).floor() as i32 + 1,
+                                cell.y / 2 + 1,
+                            ),
+                        ));
+                        // next_rays.push((
+                        //     angle * 2 + 1,
+                        //     IVec2::new((cell.x as f32 + offset_1).floor() as i32, cell.y / 2 + 1),
+                        // ));
+                        // next_rays.push((
+                        //     angle * 2 + 1,
+                        //     IVec2::new(
+                        //         (cell.x as f32 + offset_1).floor() as i32 + 1,
+                        //         cell.y / 2 + 1,
+                        //     ),
+                        // ));
+                    }
                 }
                 rays = next_rays;
             }
 
             for ray in &all_rays {
-                draw_line(ray.0, ray.1, ray.2);
+                draw_line(ray.0 * factor + corner, ray.1 * factor + corner, ray.2);
             }
         }
 
