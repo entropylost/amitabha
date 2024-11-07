@@ -96,7 +96,7 @@ impl Grid {
         let c = 4.0;
         let ray_dir = FVec2::from_angle(ray_angle) * c;
         Self {
-            origin: FVec2::new(1024.0, 1024.0) + ray_dir * 4.0,
+            origin: FVec2::new(1024.0, 1024.0),
             axis_x: FVec2::new(ray_dir.y, -ray_dir.x),
             axis_y: ray_dir,
             size: UVec2::new(256, 256),
@@ -130,8 +130,7 @@ impl Grid {
         .project_onto_normalized(FVec2::from_angle(next_angle));
         let next_ray_interval = self.ray_interval * 2.0;
         let next_size = UVec2::new(self.size.x, self.size.y / 2);
-        let next_origin = self.origin - self.axis_y.normalize() * self.ray_interval.x
-            + next_axis_y.normalize() * next_ray_interval.x;
+        let next_origin = self.origin;
         Self {
             origin: next_origin,
             axis_x: next_axis_x,
@@ -269,12 +268,7 @@ fn main() {
         let mut rays = (0..4)
             .map(|i| {
                 let grid = Grid::first_level(i as f32 * TAU / 4.0);
-                (
-                    grid,
-                    grid.from_world(start_pos + grid.axis_y.normalize() * grid.ray_interval.x)
-                        .round()
-                        .as_ivec2(),
-                )
+                (grid, grid.from_world(start_pos).round().as_ivec2())
             })
             .collect::<Vec<_>>();
 
@@ -284,14 +278,14 @@ fn main() {
             let mut next_rays = vec![];
             for &(grid, coords) in &rays {
                 let pos = grid.to_world(coords.as_vec2());
-                let end = pos + grid.ray_dir() * (grid.ray_interval.y - grid.ray_interval.x);
+                let start = pos + grid.ray_dir() * grid.ray_interval.x;
+                let end = pos + grid.ray_dir() * grid.ray_interval.y;
                 if coords.abs().cmplt(grid.size.as_ivec2() / 2).all() {
-                    all_rays.push((pos, end, colors[c]));
+                    all_rays.push((start, end, colors[c]));
                 }
                 for l in [false, true] {
                     let next_grid = grid.split_level(l);
-                    let next_pos = pos - grid.ray_dir() * grid.ray_interval.x
-                        + next_grid.ray_dir() * next_grid.ray_interval.x;
+                    let next_pos = pos;
                     let next_coords = next_grid.from_world(next_pos);
 
                     let (nc_a, nc_b) = if !l {
