@@ -44,7 +44,7 @@ fn trace(
     ray_start: Expr<Vec2<f32>>,
     interval: Expr<Vec2<f32>>,
     args: TraceArgs,
-) -> (Expr<f32>, Expr<bool>) {
+) -> (Expr<f32>, Expr<f32>) {
     let circles = [
         (args.0, args.1, 100.0),
         (Vec2::expr(1000.0, 1200.0), 32.0.expr(), 0.0),
@@ -58,28 +58,30 @@ fn trace(
             *best_color = *color;
         }
     }
-    (**best_color, best_t < interval.y)
+    (
+        **best_color,
+        if best_t < interval.y {
+            0.0_f32.expr()
+        } else {
+            1.0_f32.expr()
+        },
+    )
 }
 
 #[tracked]
 fn over2(
-    (color, hit): (Expr<f32>, Expr<bool>),
-    (next_color, next_hit): (Expr<f32>, Expr<bool>),
-) -> (Expr<f32>, Expr<bool>) {
-    if hit {
-        (color, hit)
-    } else {
-        (next_color, next_hit)
-    }
+    (color, transmittance): (Expr<f32>, Expr<f32>),
+    (next_color, next_transmittance): (Expr<f32>, Expr<f32>),
+) -> (Expr<f32>, Expr<f32>) {
+    (
+        color + next_color * transmittance,
+        transmittance * next_transmittance,
+    )
 }
 
 #[tracked]
-fn over((color, hit): (Expr<f32>, Expr<bool>), next_color: Expr<f32>) -> Expr<f32> {
-    if hit {
-        color
-    } else {
-        next_color
-    }
+fn over((color, transmittance): (Expr<f32>, Expr<f32>), next_color: Expr<f32>) -> Expr<f32> {
+    color + next_color * transmittance
 }
 
 #[tracked]
@@ -87,7 +89,7 @@ fn trace_between(
     start: Expr<Vec2<f32>>,
     end: Expr<Vec2<f32>>,
     args: TraceArgs,
-) -> (Expr<f32>, Expr<bool>) {
+) -> (Expr<f32>, Expr<f32>) {
     let delta = end - start;
     let l = delta.length();
     let ray_dir = delta / l;
@@ -95,10 +97,33 @@ fn trace_between(
     trace(ray_dir, start, interval, args)
 }
 
+#[tracked]
+fn trace_frustrum(
+    start_a: Expr<Vec2<f32>>,
+    end_a: Expr<Vec2<f32>>,
+    start_b: Expr<Vec2<f32>>,
+    end_b: Expr<Vec2<f32>>,
+    args: TraceArgs,
+) -> (Expr<f32>, Expr<f32>) {
+    let color = 0.0_f32.var();
+    let transmittance = 0.0_f32.var();
+    for i in 0_u32..10_u32 {
+        let i: Expr<u32> = i;
+        let t = i.cast_f32() / 10.0;
+        let start = start_a * t + start_b * (1.0 - t);
+        let end = end_a * t + end_b * (1.0 - t);
+
+        let (c, t) = trace_between(start, end, args);
+        *color += c;
+        *transmittance += t;
+    }
+    (color / 10.0, transmittance / 10.0)
+}
+
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Value)]
 struct MergeUpRayData {
-    trace_hit: bool,
+    trace_transmittance: f32,
     trace_color: f32,
 }
 
@@ -127,13 +152,13 @@ impl GridStorage {
         grid: Expr<Grid2>,
         pos: Expr<Vec2<i32>>,
         angle: Expr<u32>,
-    ) -> (Expr<f32>, Expr<bool>) {
+    ) -> (Expr<f32>, Expr<f32>) {
         let cell = grid.cell_index(pos, angle);
         if cell != u32::MAX {
             let data = self.merge_up_data.read(cell);
-            (data.trace_color, data.trace_hit)
+            (data.trace_color, data.trace_transmittance)
         } else {
-            (0.0_f32.expr(), false.expr())
+            (0.0_f32.expr(), 1.0_f32.expr())
         }
     }
 
@@ -344,7 +369,7 @@ fn main() {
 
     let data = DEVICE.create_buffer_from_fn(data_size as usize, |_i| RayData { color: 0.0 });
     let merge_up_data = DEVICE.create_buffer_from_fn(data_size as usize, |_i| MergeUpRayData {
-        trace_hit: false,
+        trace_transmittance: 1.0,
         trace_color: 0.0,
     });
     let grids = DEVICE.create_buffer_from_slice(&grids_host);
@@ -371,7 +396,7 @@ fn main() {
         storage.merge_up_data.write(
             data_index,
             MergeUpRayData::from_comps_expr(MergeUpRayDataComps {
-                trace_hit: tr.1,
+                trace_transmittance: tr.1,
                 trace_color: tr.0,
             }),
         );
@@ -404,7 +429,7 @@ fn main() {
         storage.merge_up_data.write(
             data_index,
             MergeUpRayData::from_comps_expr(MergeUpRayDataComps {
-                trace_hit: tr.1,
+                trace_transmittance: tr.1,
                 trace_color: tr.0,
             }),
         );
@@ -429,21 +454,27 @@ fn main() {
             let a = (upper_size + lower_size - total_size).abs() < 0.001;
             lc_assert!(a);
 
+            let offset = 2 * angle.cast_i32() - grid.angle_resolution.cast_i32() + 1;
             let offset_0 = 2 * angle.cast_i32() - grid.angle_resolution.cast_i32();
             let offset_1 = 2 * angle.cast_i32() - grid.angle_resolution.cast_i32() + 2;
 
             let radiance = if cell.y % 2 == 0 {
+                let c = Vec2::expr(cell.x + offset * 2, cell.y / 2 + 1);
                 let c_0 = Vec2::expr(cell.x + offset_0 * 2, cell.y / 2 + 1);
                 let c_1 = Vec2::expr(cell.x + offset_1 * 2, cell.y / 2 + 1);
 
-                let tr_0 = trace_between(
+                let tr_0 = trace_frustrum(
                     grid.to_world(cell.cast_f32()),
-                    next_grid.to_world(c_0.cast_f32()),
+                    next_grid.to_world(c.cast_f32()),
+                    grid.to_world(cell.cast_f32() - Vec2::x()),
+                    next_grid.to_world(c.cast_f32() - 4.0 * Vec2::<f32>::x().expr()),
                     (pos, r),
                 );
-                let tr_1 = trace_between(
+                let tr_1 = trace_frustrum(
                     grid.to_world(cell.cast_f32()),
-                    next_grid.to_world(c_1.cast_f32()),
+                    next_grid.to_world(c.cast_f32()),
+                    grid.to_world(cell.cast_f32() + Vec2::x()),
+                    next_grid.to_world(c.cast_f32() + 4.0 * Vec2::<f32>::x().expr()),
                     (pos, r),
                 );
 
@@ -472,17 +503,22 @@ fn main() {
                         * lower_size)
                     / (upper_size + lower_size)
             } else {
+                let c = Vec2::expr(cell.x + offset, cell.y / 2 + 1);
                 let c_0 = Vec2::expr(cell.x + offset_0, cell.y / 2 + 1);
                 let c_1 = Vec2::expr(cell.x + offset_1, cell.y / 2 + 1);
 
-                let tr_0 = trace_between(
+                let tr_0 = trace_frustrum(
                     grid.to_world(cell.cast_f32()),
-                    next_grid.to_world(c_0.cast_f32()),
+                    next_grid.to_world(c.cast_f32()),
+                    grid.to_world(cell.cast_f32() - Vec2::x()),
+                    next_grid.to_world(c.cast_f32() - 2.0 * Vec2::<f32>::x().expr()),
                     (pos, r),
                 );
-                let tr_1 = trace_between(
+                let tr_1 = trace_frustrum(
                     grid.to_world(cell.cast_f32()),
-                    next_grid.to_world(c_1.cast_f32()),
+                    next_grid.to_world(c.cast_f32()),
+                    grid.to_world(cell.cast_f32() + Vec2::x()),
+                    next_grid.to_world(c.cast_f32() + 2.0 * Vec2::<f32>::x().expr()),
                     (pos, r),
                 );
 
@@ -552,8 +588,8 @@ fn main() {
             is_tracing = !is_tracing;
         }
 
-        let r = (rt.tick as f32 / 60.0).sin() * 12.0 + 14.0;
-        let pos = Vec2::new(512.0, 512.0);
+        let r = 4.0; // (rt.tick as f32 / 60.0).sin() * 12.0 + 14.0;
+        let pos = Vec2::new(1344.86, 1021.46);
 
         if is_tracing {
             trace_kernel.dispatch([grid_size[0], grid_size[1], 1], &pos, &r);
@@ -601,10 +637,10 @@ fn main() {
             // println!("{:?}", rt.cursor_position);
             let corner = FVec2::new(100.0, 100.0);
             let factor = 30.0;
-            let cell = IVec2::new(30, 0);
-            // let cell = ((FVec2::from(rt.cursor_position).yx() - corner) / factor)
-            //     .round()
-            //     .as_ivec2();
+            // let cell = IVec2::new(30, 0);
+            let cell = ((FVec2::from(rt.cursor_position).yx() - corner) / factor)
+                .round()
+                .as_ivec2();
 
             let mut all_rays = vec![
                 (
@@ -629,7 +665,7 @@ fn main() {
 
             let axis_x = FVec2::new(0.0, 1.0);
 
-            for c in 0..3 {
+            for c in 0..4 {
                 let mut next_rays = vec![];
                 for (angle, cell) in rays {
                     let axis_y = FVec2::new((1 << c) as f32, 0.0);
