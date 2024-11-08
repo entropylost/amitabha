@@ -16,6 +16,8 @@ use utils::pcgf;
 
 mod utils;
 
+type TraceArgs = (Expr<Vec2<f32>>, Expr<f32>);
+
 #[tracked]
 fn intersect_circle(
     ray_start: Expr<Vec2<f32>>,
@@ -41,16 +43,16 @@ fn trace(
     ray_dir: Expr<Vec2<f32>>,
     ray_start: Expr<Vec2<f32>>,
     interval: Expr<Vec2<f32>>,
+    args: TraceArgs,
 ) -> (Expr<f32>, Expr<bool>) {
     let circles = [
-        (Vec2::new(1024.0, 1000.0), 32.0, 10.0),
-        (Vec2::new(1000.0, 1200.0), 32.0, 0.0),
+        (args.0, args.1, 100.0),
+        (Vec2::expr(1000.0, 1200.0), 32.0.expr(), 0.0),
     ];
     let best_t = interval.y.var();
     let best_color = 0.0_f32.var();
     for (center, radius, color) in circles.iter() {
-        let (min_t, max_t, hit) =
-            intersect_circle(ray_start - center.expr(), ray_dir, radius.expr());
+        let (min_t, max_t, hit) = intersect_circle(ray_start - center, ray_dir, *radius);
         if hit && max_t > interval.x && min_t < best_t {
             *best_t = min_t;
             *best_color = *color;
@@ -81,12 +83,16 @@ fn over((color, hit): (Expr<f32>, Expr<bool>), next_color: Expr<f32>) -> Expr<f3
 }
 
 #[tracked]
-fn trace_between(start: Expr<Vec2<f32>>, end: Expr<Vec2<f32>>) -> (Expr<f32>, Expr<bool>) {
+fn trace_between(
+    start: Expr<Vec2<f32>>,
+    end: Expr<Vec2<f32>>,
+    args: TraceArgs,
+) -> (Expr<f32>, Expr<bool>) {
     let delta = end - start;
     let l = delta.length();
     let ray_dir = delta / l;
     let interval = Vec2::expr(0.0, l);
-    trace(ray_dir, start, interval)
+    trace(ray_dir, start, interval, args)
 }
 
 #[repr(C)]
@@ -281,7 +287,7 @@ fn main() {
         .agx()
         .init();
 
-    let trace_kernel = DEVICE.create_kernel::<fn()>(&track!(|| {
+    let trace_kernel = DEVICE.create_kernel::<fn((Vec2<f32>, f32))>(&track!(|args| {
         let num_dirs = grid_size[0] * 6;
 
         let offset = pcgf(dispatch_id().x + dispatch_id().y * grid_size[0]);
@@ -292,7 +298,7 @@ fn main() {
             let i: Expr<u32> = i;
             let ray_angle = (i.cast_f32() + offset) / num_dirs as f32 * TAU;
             let ray_dir = Vec2::expr(ray_angle.cos(), ray_angle.sin());
-            let (color, _t) = trace(ray_dir, pos, Vec2::new(0.0, f32::INFINITY).expr());
+            let (color, _t) = trace(ray_dir, pos, Vec2::new(0.0, f32::INFINITY).expr(), args);
             *total_color += color;
         }
         app.display().write(
@@ -345,7 +351,7 @@ fn main() {
         merge_up_data,
     };
 
-    let init_merge_up = DEVICE.create_kernel::<fn(u32)>(&track!(|face| {
+    let init_merge_up = DEVICE.create_kernel::<fn(u32, (Vec2<f32>, f32))>(&track!(|face, r| {
         let grid = storage.grid_at(0.expr(), face);
         let cell = dispatch_id().xy().cast_i32();
 
@@ -355,7 +361,7 @@ fn main() {
 
         let start = grid.to_world(cell.cast_f32());
         let dir = grid.ray_dir(0_f32.expr());
-        let tr = trace(dir, start, Vec2::expr(0.0, grid.ray_len(dir)));
+        let tr = trace(dir, start, Vec2::expr(0.0, grid.ray_len(dir)), r);
 
         storage.merge_up_data.write(
             data_index,
@@ -399,61 +405,81 @@ fn main() {
         );
     }));
 
-    let merge = DEVICE.create_kernel::<fn(u32, u32)>(&track!(|lv, face| {
-        let grid = storage.grid_at(lv, face);
-        let cell = dispatch_id().xy().cast_i32();
-        let angle = dispatch_id().z;
+    let merge =
+        DEVICE.create_kernel::<fn(u32, u32, Vec2<f32>, f32)>(&track!(|lv, face, pos, r| {
+            let grid = storage.grid_at(lv, face);
+            let cell = dispatch_id().xy().cast_i32();
+            let angle = dispatch_id().z;
 
-        let data_index = grid.cell_index(cell, angle);
-        let a = data_index != u32::MAX;
-        lc_assert!(a);
+            let data_index = grid.cell_index(cell, angle);
+            let a = data_index != u32::MAX;
+            lc_assert!(a);
 
-        let next_grid = storage.grid_at(lv + 1, face);
+            let next_grid = storage.grid_at(lv + 1, face);
 
-        let total_size = grid.angle_size(angle);
-        let upper_size = next_grid.angle_size(angle * 2);
-        let lower_size = next_grid.angle_size(angle * 2 + 1);
+            let total_size = grid.angle_size(angle);
+            let upper_size = next_grid.angle_size(angle * 2);
+            let lower_size = next_grid.angle_size(angle * 2 + 1);
 
-        let a = (upper_size + lower_size - total_size).abs() < 0.001;
-        lc_assert!(a);
+            let a = (upper_size + lower_size - total_size).abs() < 0.001;
+            lc_assert!(a);
 
-        let radiance = if cell.y % 2 == 0 {
-            // Grids are directly overlapping.
-            (storage.load_grid(next_grid, Vec2::expr(cell.x, cell.y / 2), angle * 2) * upper_size
-                + storage.load_grid(next_grid, Vec2::expr(cell.x, cell.y / 2), angle * 2 + 1)
-                    * lower_size)
-                / (upper_size + lower_size)
-        } else {
-            let dir = grid.ray_dir(angle.cast_f32());
-            let tr = storage.load_grid_up(grid, cell, angle);
-            // let tr = trace(
-            //     dir,
-            //     grid.to_world(cell.cast_f32()),
-            //     Vec2::expr(0.0, grid.ray_len(dir)),
-            // );
+            let radiance = if cell.y % 2 == 0 {
+                // Grids are directly overlapping.
+                (storage.load_grid(next_grid, Vec2::expr(cell.x, cell.y / 2), angle * 2)
+                    * upper_size
+                    + storage.load_grid(next_grid, Vec2::expr(cell.x, cell.y / 2), angle * 2 + 1)
+                        * lower_size)
+                    / (upper_size + lower_size)
+            } else {
+                let dir = grid.ray_dir(angle.cast_f32());
+                // let tr = storage.load_grid_up(grid, cell, angle);
+                // let tr = trace(
+                //     dir,
+                //     grid.to_world(cell.cast_f32()),
+                //     Vec2::expr(0.0, grid.ray_len(dir)),
+                // );
 
-            let offset_0 = 2 * angle.cast_i32() - grid.angle_resolution.cast_i32();
-            let offset_1 = 2 * angle.cast_i32() - grid.angle_resolution.cast_i32() + 2;
+                let offset_0 = 2 * angle.cast_i32() - grid.angle_resolution.cast_i32();
+                let offset_1 = 2 * angle.cast_i32() - grid.angle_resolution.cast_i32() + 2;
 
-            let incoming_radiance = storage.load_grid(
-                next_grid,
-                Vec2::expr(cell.x + offset_0, cell.y / 2 + 1),
-                angle * 2,
-            ) * upper_size
-                + storage.load_grid(
-                    next_grid,
-                    Vec2::expr(cell.x + offset_1, cell.y / 2 + 1),
-                    angle * 2 + 1,
-                ) * lower_size;
+                let c_0 = Vec2::expr(cell.x + offset_0, cell.y / 2 + 1);
+                let c_1 = Vec2::expr(cell.x + offset_1, cell.y / 2 + 1);
 
-            over(tr, incoming_radiance / (upper_size + lower_size))
-        };
+                let tr_0 = trace_between(
+                    grid.to_world(cell.cast_f32()),
+                    next_grid.to_world(c_0.cast_f32()),
+                    (pos, r),
+                );
+                let tr_1 = trace_between(
+                    grid.to_world(cell.cast_f32()),
+                    next_grid.to_world(c_1.cast_f32()),
+                    (pos, r),
+                );
 
-        storage.data.write(
-            data_index,
-            RayData::from_comps_expr(RayDataComps { color: radiance }),
-        );
-    }));
+                let incoming_radiance = over(
+                    tr_0,
+                    0.5 * storage.load_grid(next_grid, c_0, angle * 2)
+                        + 0.25
+                            * (storage.load_grid(next_grid, c_0 - Vec2::x(), angle * 2)
+                                + storage.load_grid(next_grid, c_0 + Vec2::x(), angle * 2)),
+                ) * upper_size
+                    + over(
+                        tr_1,
+                        0.5 * storage.load_grid(next_grid, c_1, angle * 2 + 1)
+                            + 0.25
+                                * (storage.load_grid(next_grid, c_1 - Vec2::x(), angle * 2 + 1)
+                                    + storage.load_grid(next_grid, c_1 + Vec2::x(), angle * 2 + 1)),
+                    ) * lower_size;
+
+                incoming_radiance / (upper_size + lower_size)
+            };
+
+            storage.data.write(
+                data_index,
+                RayData::from_comps_expr(RayDataComps { color: radiance }),
+            );
+        }));
 
     let final_display = DEVICE.create_kernel::<fn()>(&track!(|| {
         let pos = dispatch_id().xy().cast_f32();
@@ -501,22 +527,31 @@ fn main() {
             is_tracing = !is_tracing;
         }
 
+        let r = 6.0; // (rt.tick as f32 / 60.0).sin() * 11.0 + 14.0;
+        let pos = rt.cursor_position;
+
         if is_tracing {
-            trace_kernel.dispatch([grid_size[0], grid_size[1], 1]);
+            // trace_kernel.dispatch([grid_size[0], grid_size[1], 1], &(&pos, &r));
         } else {
             let mut time = 0.0;
-            for dir in 0..4 {
-                init_merge_up.dispatch([BASE_SIZE.x, BASE_SIZE.y, 1], &dir);
-                for i in 1..num_cascades {
-                    merge_up.dispatch([BASE_SIZE.x, BASE_SIZE.y >> i, 1 << i], &i, &dir);
-                }
-            }
+            // for dir in 0..4 {
+            //     init_merge_up.dispatch([BASE_SIZE.x, BASE_SIZE.y, 1], &dir, &r);
+            //     for i in 1..num_cascades {
+            //         merge_up.dispatch([BASE_SIZE.x, BASE_SIZE.y >> i, 1 << i], &i, &dir);
+            //     }
+            // }
 
             for dir in 0..4 {
                 let commands = (0..num_cascades)
                     .rev()
                     .map(|i| {
-                        merge.dispatch_async([BASE_SIZE.x, BASE_SIZE.y >> i, 1 << i], &i, &dir)
+                        merge.dispatch_async(
+                            [BASE_SIZE.x, BASE_SIZE.y >> i, 1 << i],
+                            &i,
+                            &dir,
+                            &pos,
+                            &r,
+                        )
                     })
                     .collect::<Vec<_>>()
                     .chain();
