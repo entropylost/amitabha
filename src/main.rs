@@ -391,9 +391,9 @@ fn main() {
             app.display().write(pos.cast_u32(), color);
         }
     ));
-    let draw_line = |start: FVec2, end: FVec2, color: Vec3<f32>| {
+    let draw_line = |start: FVec2, end: FVec2, color: Vec3<f32>, spacing: f32| {
         draw_line_t.dispatch(
-            [(start - end).length().ceil() as u32, 1, 1],
+            [((start - end).length() * spacing).ceil() as u32, 1, 1],
             &Vec2::from(start),
             &Vec2::from(end),
             &color,
@@ -411,7 +411,7 @@ fn main() {
     ];
 
     let mut is_tracing = false;
-    let mut display_grid = false;
+    let mut display_frustrums = false;
 
     app.run(|rt, _scope| {
         if rt.just_pressed_key(KeyCode::Backslash) {
@@ -439,13 +439,14 @@ fn main() {
             }
         }
 
-        if rt.just_pressed_key(KeyCode::KeyG) {
-            display_grid = !display_grid;
+        if rt.just_pressed_key(KeyCode::KeyF) {
+            display_frustrums = !display_frustrums;
         }
 
         if rt.pressed_button(MouseButton::Left) {
             let corner = FVec2::new(100.0, 100.0);
-            let factor = 40.0;
+            let factor = 30.0;
+            // let cell = IVec2::new(30, 2);
             let cell = ((FVec2::from(rt.cursor_position).yx() - corner) / factor)
                 .round()
                 .as_ivec2();
@@ -455,15 +456,21 @@ fn main() {
                     cell.yx().as_vec2(),
                     cell.yx().as_vec2() + FVec2::new(1000.0, -1000.0),
                     Vec3::splat(5.0),
+                    1.0,
                 ),
                 (
                     cell.yx().as_vec2(),
                     cell.yx().as_vec2() + FVec2::new(1000.0, 1000.0),
                     Vec3::splat(5.0),
+                    1.0,
                 ),
             ];
+            if display_frustrums {
+                all_rays.clear();
+            }
+            let cell = cell + IVec2::Y;
 
-            let mut rays = vec![(0_u32, cell)];
+            let mut rays = vec![(0_i32, cell)];
 
             let axis_x = FVec2::new(0.0, 1.0);
 
@@ -471,56 +478,62 @@ fn main() {
                 let mut next_rays = vec![];
                 for (angle, cell) in rays {
                     let axis_y = FVec2::new((1 << c) as f32, 0.0);
-
-                    let dir = FVec2::from_angle(
-                        ((angle as f32 + 0.5) / (1 << c) as f32 - 0.5) * TAU / 4.0,
-                    );
-                    let len = axis_y.length_squared() / (dir.dot(axis_y));
-
-                    let a0 = ((angle as f32) / (1 << c) as f32 - 0.5) * TAU / 4.0;
-                    let a1 = ((angle as f32 + 1.0) / (1 << c) as f32 - 0.5) * TAU / 4.0;
+                    let angle_res = 1_i32 << c;
 
                     all_rays.push((
                         axis_y * cell.y as f32 + axis_x * cell.x as f32,
-                        axis_y * cell.y as f32 + axis_x * cell.x as f32 + dir * len,
+                        axis_y * (cell.y as f32 + 1.0)
+                            + axis_x * (cell.x + 2 * angle - angle_res + 1) as f32,
                         colors[c],
+                        1.0,
                     ));
 
-                    if cell.y % 2 == 0 {
+                    let f = if display_frustrums { 1 } else { 0 };
+
+                    all_rays.push((
+                        axis_y * cell.y as f32 + axis_x * (cell.x as f32 - f as f32 * 1.0),
+                        axis_y * (cell.y as f32 + 1.0)
+                            + axis_x * (cell.x + 2 * angle - angle_res - f) as f32,
+                        colors[c],
+                        0.1,
+                    ));
+                    all_rays.push((
+                        axis_y * cell.y as f32 + axis_x * (cell.x as f32 + f as f32 * 1.0),
+                        axis_y * (cell.y as f32 + 1.0)
+                            + axis_x * (cell.x + 2 * angle - angle_res + 2 + f) as f32,
+                        colors[c],
+                        0.1,
+                    ));
+
+                    if cell.y.rem_euclid(2) == 0 {
                         next_rays.push((angle * 2, IVec2::new(cell.x, cell.y / 2)));
                         next_rays.push((angle * 2 + 1, IVec2::new(cell.x, cell.y / 2)));
                     } else {
-                        let offset_0 = a0.tan() * axis_y.length();
-                        let offset_1 = a1.tan() * axis_y.length();
+                        let offset_0 = 2 * angle - angle_res;
+                        let offset_1 = 2 * angle - angle_res + 2;
 
-                        let f = (cell.x as f32 + offset_0).floor();
-                        next_rays.push((angle * 2, IVec2::new(f as i32, cell.y / 2 + 1)));
-                        if (cell.x as f32 + offset_0) != f {
-                            next_rays.push((angle * 2, IVec2::new(f as i32 + 1, cell.y / 2 + 1)));
-                        }
-                        let f = (cell.x as f32 + offset_1).floor();
-                        next_rays.push((angle * 2 + 1, IVec2::new(f as i32, cell.y / 2 + 1)));
-                        if (cell.x as f32 + offset_1) != f {
-                            next_rays
-                                .push((angle * 2 + 1, IVec2::new(f as i32 + 1, cell.y / 2 + 1)));
-                        }
+                        next_rays.push((
+                            angle * 2,
+                            IVec2::new(cell.x + offset_0, cell.y.div_euclid(2) + 1),
+                        ));
+                        next_rays.push((
+                            angle * 2 + 1,
+                            IVec2::new(cell.x + offset_1, cell.y.div_euclid(2) + 1),
+                        ));
                     }
                 }
                 rays = next_rays;
             }
 
             for ray in &all_rays {
-                draw_line(ray.0 * factor + corner, ray.1 * factor + corner, ray.2);
+                draw_line(
+                    ray.0 * factor + corner,
+                    ray.1 * factor + corner,
+                    ray.2,
+                    ray.3,
+                );
             }
         }
-
-        // if display_grid {
-        //     let mut grid = Grid::first_level(0.0, 8.0);
-        //     for c in 0..5 {
-        //         draw_grid(grid, colors[c]);
-        //         grid = grid.split_level(c % 2 == 0);
-        //     }
-        // }
 
         rt.log_fps();
     });
