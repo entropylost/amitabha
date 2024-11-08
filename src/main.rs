@@ -46,7 +46,7 @@ fn trace(
     args: TraceArgs,
 ) -> (Expr<f32>, Expr<f32>) {
     let circles = [
-        (args.0, args.1, 100.0),
+        (args.0, args.1, 50.0),
         (Vec2::expr(1000.0, 1200.0), 32.0.expr(), 0.0),
     ];
     let best_t = interval.y.var();
@@ -105,11 +105,12 @@ fn trace_frustrum(
     end_b: Expr<Vec2<f32>>,
     args: TraceArgs,
 ) -> (Expr<f32>, Expr<f32>) {
+    let num_samples = 10_u32;
     let color = 0.0_f32.var();
     let transmittance = 0.0_f32.var();
-    for i in 0_u32..10_u32 {
+    for i in 0_u32..num_samples {
         let i: Expr<u32> = i;
-        let t = i.cast_f32() / 10.0;
+        let t = (i.cast_f32() + 0.5) / (num_samples as f32);
         let start = start_a * t + start_b * (1.0 - t);
         let end = end_a * t + end_b * (1.0 - t);
 
@@ -117,7 +118,10 @@ fn trace_frustrum(
         *color += c;
         *transmittance += t;
     }
-    (color / 10.0, transmittance / 10.0)
+    (
+        color / num_samples as f32,
+        transmittance / num_samples as f32,
+    )
 }
 
 #[repr(C)]
@@ -588,8 +592,12 @@ fn main() {
             is_tracing = !is_tracing;
         }
 
+        // 8.0: 1018 = 1024 - 6
+        // 4.0: 1022 = 1024 - 2
+
         let r = 4.0; // (rt.tick as f32 / 60.0).sin() * 12.0 + 14.0;
-        let pos = Vec2::new(1344.86, 1021.46);
+        let pos = Vec2::new(1144.0, 1022.0);
+        // 1019.25, 1606.28
 
         if is_tracing {
             trace_kernel.dispatch([grid_size[0], grid_size[1], 1], &pos, &r);
