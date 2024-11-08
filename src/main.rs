@@ -60,6 +60,18 @@ fn trace(
 }
 
 #[tracked]
+fn over2(
+    (color, hit): (Expr<f32>, Expr<bool>),
+    (next_color, next_hit): (Expr<f32>, Expr<bool>),
+) -> (Expr<f32>, Expr<bool>) {
+    if hit {
+        (color, hit)
+    } else {
+        (next_color, next_hit)
+    }
+}
+
+#[tracked]
 fn over((color, hit): (Expr<f32>, Expr<bool>), next_color: Expr<f32>) -> Expr<f32> {
     if hit {
         color
@@ -79,6 +91,13 @@ fn trace_between(start: Expr<Vec2<f32>>, end: Expr<Vec2<f32>>) -> (Expr<f32>, Ex
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Value)]
+struct MergeUpRayData {
+    trace_hit: bool,
+    trace_color: f32,
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Value)]
 struct RayData {
     color: f32,
 }
@@ -87,12 +106,29 @@ struct GridStorage {
     grids: Buffer<Grid2>,
     base_grids: u32,
     data: Buffer<RayData>,
+    merge_up_data: Buffer<MergeUpRayData>,
 }
 impl GridStorage {
     #[tracked]
     fn grid_at(&self, lv: Expr<u32>, dir: Expr<u32>) -> Expr<Grid2> {
         let offset = lv * self.base_grids + dir;
         self.grids.read(offset)
+    }
+
+    #[tracked]
+    fn load_grid_up(
+        &self,
+        grid: Expr<Grid2>,
+        pos: Expr<Vec2<i32>>,
+        angle: Expr<u32>,
+    ) -> (Expr<f32>, Expr<bool>) {
+        let cell = grid.cell_index(pos, angle);
+        if cell != u32::MAX {
+            let data = self.merge_up_data.read(cell);
+            (data.trace_color, data.trace_hit)
+        } else {
+            (0.0_f32.expr(), false.expr())
+        }
     }
 
     #[tracked]
@@ -223,19 +259,6 @@ impl Grid {
             angle_resolution: 1,
         }
     }
-    fn ray_dir(&self) -> FVec2 {
-        self.axis_y.normalize()
-    }
-    fn to_world(&self, pos: FVec2) -> FVec2 {
-        self.origin + self.axis_x * pos.x + self.axis_y * pos.y
-    }
-    fn from_world(&self, pos: FVec2) -> FVec2 {
-        let local = pos - self.origin;
-        FVec2::new(
-            local.dot(self.axis_x.normalize()) / self.axis_x.length(),
-            local.dot(self.axis_y.normalize()) / self.axis_y.length(),
-        )
-    }
     fn next_level(&self) -> Self {
         Self {
             origin: self.origin,
@@ -309,13 +332,72 @@ fn main() {
         .collect::<Vec<_>>();
 
     let data = DEVICE.create_buffer_from_fn(data_size as usize, |_i| RayData { color: 0.0 });
+    let merge_up_data = DEVICE.create_buffer_from_fn(data_size as usize, |_i| MergeUpRayData {
+        trace_hit: false,
+        trace_color: 0.0,
+    });
     let grids = DEVICE.create_buffer_from_slice(&grids_host);
 
     let storage = GridStorage {
         grids,
         base_grids: 4,
         data,
+        merge_up_data,
     };
+
+    let init_merge_up = DEVICE.create_kernel::<fn(u32)>(&track!(|face| {
+        let grid = storage.grid_at(0.expr(), face);
+        let cell = dispatch_id().xy().cast_i32();
+
+        let data_index = grid.cell_index(cell, 0.expr());
+        let a = data_index != u32::MAX;
+        lc_assert!(a);
+
+        let start = grid.to_world(cell.cast_f32());
+        let dir = grid.ray_dir(0_f32.expr());
+        let tr = trace(dir, start, Vec2::expr(0.0, grid.ray_len(dir)));
+
+        storage.merge_up_data.write(
+            data_index,
+            MergeUpRayData::from_comps_expr(MergeUpRayDataComps {
+                trace_hit: tr.1,
+                trace_color: tr.0,
+            }),
+        );
+    }));
+
+    let merge_up = DEVICE.create_kernel::<fn(u32, u32)>(&track!(|lv, face| {
+        let grid = storage.grid_at(lv, face);
+        let cell = dispatch_id().xy().cast_i32();
+        let angle = dispatch_id().z;
+
+        let data_index = grid.cell_index(cell, angle);
+        let a = data_index != u32::MAX;
+        lc_assert!(a);
+
+        let last_grid = storage.grid_at(lv - 1, face);
+
+        let last_angle = angle / 2;
+
+        let offset_2 = 2 * angle.cast_i32() - grid.angle_resolution.cast_i32() + 1;
+        let last_offset = 2 * last_angle.cast_i32() - last_grid.angle_resolution.cast_i32() + 1;
+
+        let last_cell_0 = Vec2::expr(cell.x, cell.y * 2);
+        let last_cell_1 = Vec2::expr(cell.x + offset_2 - last_offset, cell.y * 2 + 1);
+
+        let tr = over2(
+            storage.load_grid_up(last_grid, last_cell_0, last_angle),
+            storage.load_grid_up(last_grid, last_cell_1, last_angle),
+        );
+
+        storage.merge_up_data.write(
+            data_index,
+            MergeUpRayData::from_comps_expr(MergeUpRayDataComps {
+                trace_hit: tr.1,
+                trace_color: tr.0,
+            }),
+        );
+    }));
 
     let merge = DEVICE.create_kernel::<fn(u32, u32)>(&track!(|lv, face| {
         let grid = storage.grid_at(lv, face);
@@ -343,11 +425,12 @@ fn main() {
                 / (upper_size + lower_size)
         } else {
             let dir = grid.ray_dir(angle.cast_f32());
-            let tr = trace(
-                dir,
-                grid.to_world(cell.cast_f32()),
-                Vec2::expr(0.0, grid.ray_len(dir)),
-            );
+            let tr = storage.load_grid_up(grid, cell, angle);
+            // let tr = trace(
+            //     dir,
+            //     grid.to_world(cell.cast_f32()),
+            //     Vec2::expr(0.0, grid.ray_len(dir)),
+            // );
 
             let offset_0 = 2 * angle.cast_i32() - grid.angle_resolution.cast_i32();
             let offset_1 = 2 * angle.cast_i32() - grid.angle_resolution.cast_i32() + 2;
@@ -422,6 +505,13 @@ fn main() {
             trace_kernel.dispatch([grid_size[0], grid_size[1], 1]);
         } else {
             let mut time = 0.0;
+            for dir in 0..4 {
+                init_merge_up.dispatch([BASE_SIZE.x, BASE_SIZE.y, 1], &dir);
+                for i in 1..num_cascades {
+                    merge_up.dispatch([BASE_SIZE.x, BASE_SIZE.y >> i, 1 << i], &i, &dir);
+                }
+            }
+
             for dir in 0..4 {
                 let commands = (0..num_cascades)
                     .rev()
