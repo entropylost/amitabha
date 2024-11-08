@@ -43,8 +43,8 @@ fn trace(
     interval: Expr<Vec2<f32>>,
 ) -> (Expr<f32>, Expr<bool>) {
     let circles = [
-        (Vec2::new(1024.0, 800.0), 32.0, 10.0),
-        (Vec2::new(1000.0, 600.0), 32.0, 0.0),
+        (Vec2::new(1024.0, 1000.0), 32.0, 10.0),
+        (Vec2::new(1000.0, 1200.0), 32.0, 0.0),
     ];
     let best_t = interval.y.var();
     let best_color = 0.0_f32.var();
@@ -146,7 +146,16 @@ impl Grid2Expr {
 
     #[tracked]
     fn ray_angle(&self, angle: Expr<f32>) -> Expr<f32> {
-        ((angle + 0.5) / self.angle_resolution.cast_f32() - 0.5) * TAU / 4.0
+        let y_pos = angle - self.angle_resolution.cast_f32() / 2.0 + 0.5;
+        let x_pos = self.axis_y.length() / self.axis_x.length();
+        y_pos.atan2(x_pos)
+    }
+
+    #[tracked]
+    fn angle_size(&self, angle: Expr<u32>) -> Expr<f32> {
+        let upper = self.ray_angle(angle.cast_f32() + 0.5);
+        let lower = self.ray_angle(angle.cast_f32() - 0.5);
+        upper - lower
     }
 
     #[tracked]
@@ -196,7 +205,7 @@ impl Grid {
     }
     fn first_level(ray_dir: FVec2) -> Self {
         let axis_x = ray_dir.rotate(FVec2::new(0.0, 1.0));
-        let axis_y = ray_dir.rotate(FVec2::new(1.0, 0.0));
+        let axis_y = ray_dir.rotate(FVec2::new(0.5, 0.0));
         Self {
             origin: FVec2::new(1024.0, 1024.0)
                 - axis_x * BASE_SIZE.x as f32 / 2.0
@@ -312,11 +321,19 @@ fn main() {
 
         let next_grid = storage.grid_at(lv + 1, face);
 
+        let total_size = grid.angle_size(angle);
+        let upper_size = next_grid.angle_size(angle * 2);
+        let lower_size = next_grid.angle_size(angle * 2 + 1);
+
+        let a = (upper_size + lower_size - total_size).abs() < 0.001;
+        lc_assert!(a);
+
         let radiance = if cell.y % 2 == 0 {
             // Grids are directly overlapping.
-            (storage.load_grid(next_grid, Vec2::expr(cell.x, cell.y / 2), angle * 2)
-                + storage.load_grid(next_grid, Vec2::expr(cell.x, cell.y / 2), angle * 2 + 1))
-                / 2.0
+            (storage.load_grid(next_grid, Vec2::expr(cell.x, cell.y / 2), angle * 2) * upper_size
+                + storage.load_grid(next_grid, Vec2::expr(cell.x, cell.y / 2), angle * 2 + 1)
+                    * lower_size)
+                / (upper_size + lower_size)
         } else {
             let dir = grid.ray_dir(angle.cast_f32());
             let tr = trace(
@@ -336,14 +353,15 @@ fn main() {
                 cell.x.cast_f32() + offset_0,
                 cell.y / 2 + 1,
                 angle * 2,
-            ) + storage.load_grid_bilinear(
-                next_grid,
-                cell.x.cast_f32() + offset_1,
-                cell.y / 2 + 1,
-                angle * 2 + 1,
-            );
+            ) * upper_size
+                + storage.load_grid_bilinear(
+                    next_grid,
+                    cell.x.cast_f32() + offset_1,
+                    cell.y / 2 + 1,
+                    angle * 2 + 1,
+                ) * lower_size;
 
-            over(tr, incoming_radiance / 2.0)
+            over(tr, incoming_radiance / (upper_size + lower_size))
         };
 
         storage.data.write(
