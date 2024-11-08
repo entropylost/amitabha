@@ -113,6 +113,8 @@ impl GridStorage {
         y: Expr<i32>,
         angle: Expr<u32>,
     ) -> Expr<f32> {
+        let a = (x.round() - x).abs() < 0.01;
+        lc_assert!(a);
         let x_0 = x.floor().cast_i32();
         let x_1 = x_0 + 1;
         let a = x - x_0.cast_f32();
@@ -145,8 +147,13 @@ impl Grid2Expr {
     }
 
     #[tracked]
+    fn ray_pos(&self, angle: Expr<f32>) -> Expr<f32> {
+        2.0 * angle - self.angle_resolution.cast_f32() + 1.0
+    }
+
+    #[tracked]
     fn ray_angle(&self, angle: Expr<f32>) -> Expr<f32> {
-        let y_pos = angle - self.angle_resolution.cast_f32() / 2.0 + 0.5;
+        let y_pos = self.ray_pos(angle);
         let x_pos = self.axis_y.length() / self.axis_x.length();
         y_pos.atan2(x_pos)
     }
@@ -205,7 +212,7 @@ impl Grid {
     }
     fn first_level(ray_dir: FVec2) -> Self {
         let axis_x = ray_dir.rotate(FVec2::new(0.0, 1.0));
-        let axis_y = ray_dir.rotate(FVec2::new(0.5, 0.0));
+        let axis_y = ray_dir.rotate(FVec2::new(1.0, 0.0));
         Self {
             origin: FVec2::new(1024.0, 1024.0)
                 - axis_x * BASE_SIZE.x as f32 / 2.0
@@ -342,22 +349,17 @@ fn main() {
                 Vec2::expr(0.0, grid.ray_len(dir)),
             );
 
-            let dir_0 = grid.ray_angle(angle.cast_f32() - 0.5);
-            let dir_1 = grid.ray_angle(angle.cast_f32() + 0.5);
+            let offset_0 = 2 * angle.cast_i32() - grid.angle_resolution.cast_i32();
+            let offset_1 = 2 * angle.cast_i32() - grid.angle_resolution.cast_i32() + 2;
 
-            let offset_0 = dir_0.tan() * grid.axis_y.length() / grid.axis_x.length();
-            let offset_1 = dir_1.tan() * grid.axis_y.length() / grid.axis_x.length();
-
-            let incoming_radiance = storage.load_grid_bilinear(
+            let incoming_radiance = storage.load_grid(
                 next_grid,
-                cell.x.cast_f32() + offset_0,
-                cell.y / 2 + 1,
+                Vec2::expr(cell.x + offset_0, cell.y / 2 + 1),
                 angle * 2,
             ) * upper_size
-                + storage.load_grid_bilinear(
+                + storage.load_grid(
                     next_grid,
-                    cell.x.cast_f32() + offset_1,
-                    cell.y / 2 + 1,
+                    Vec2::expr(cell.x + offset_1, cell.y / 2 + 1),
                     angle * 2 + 1,
                 ) * lower_size;
 
