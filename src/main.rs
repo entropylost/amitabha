@@ -287,7 +287,7 @@ fn main() {
         .agx()
         .init();
 
-    let trace_kernel = DEVICE.create_kernel::<fn((Vec2<f32>, f32))>(&track!(|args| {
+    let trace_kernel = DEVICE.create_kernel::<fn(Vec2<f32>, f32)>(&track!(|vpos, r| {
         let num_dirs = grid_size[0] * 6;
 
         let offset = pcgf(dispatch_id().x + dispatch_id().y * grid_size[0]);
@@ -298,7 +298,12 @@ fn main() {
             let i: Expr<u32> = i;
             let ray_angle = (i.cast_f32() + offset) / num_dirs as f32 * TAU;
             let ray_dir = Vec2::expr(ray_angle.cos(), ray_angle.sin());
-            let (color, _t) = trace(ray_dir, pos, Vec2::new(0.0, f32::INFINITY).expr(), args);
+            let (color, _t) = trace(
+                ray_dir,
+                pos,
+                Vec2::new(0.0, f32::INFINITY).expr(),
+                (vpos, r),
+            );
             *total_color += color;
         }
         app.display().write(
@@ -424,25 +429,49 @@ fn main() {
             let a = (upper_size + lower_size - total_size).abs() < 0.001;
             lc_assert!(a);
 
+            let offset_0 = 2 * angle.cast_i32() - grid.angle_resolution.cast_i32();
+            let offset_1 = 2 * angle.cast_i32() - grid.angle_resolution.cast_i32() + 2;
+
             let radiance = if cell.y % 2 == 0 {
+                let c_0 = Vec2::expr(cell.x + offset_0 * 2, cell.y / 2 + 1);
+                let c_1 = Vec2::expr(cell.x + offset_1 * 2, cell.y / 2 + 1);
+
+                let tr_0 = trace_between(
+                    grid.to_world(cell.cast_f32()),
+                    next_grid.to_world(c_0.cast_f32()),
+                    (pos, r),
+                );
+                let tr_1 = trace_between(
+                    grid.to_world(cell.cast_f32()),
+                    next_grid.to_world(c_1.cast_f32()),
+                    (pos, r),
+                );
+
                 // Grids are directly overlapping.
-                (storage.load_grid(next_grid, Vec2::expr(cell.x, cell.y / 2), angle * 2)
+                ((storage.load_grid(next_grid, Vec2::expr(cell.x, cell.y / 2), angle * 2)
+                    + over(
+                        tr_0,
+                        storage.load_grid(
+                            next_grid,
+                            Vec2::expr(cell.x + offset_0 * 2, cell.y / 2 + 1),
+                            angle * 2,
+                        ),
+                    ))
+                    / 2.0
                     * upper_size
-                    + storage.load_grid(next_grid, Vec2::expr(cell.x, cell.y / 2), angle * 2 + 1)
+                    + (storage.load_grid(next_grid, Vec2::expr(cell.x, cell.y / 2), angle * 2 + 1)
+                        + over(
+                            tr_1,
+                            storage.load_grid(
+                                next_grid,
+                                Vec2::expr(cell.x + offset_1 * 2, cell.y / 2 + 1),
+                                angle * 2 + 1,
+                            ),
+                        ))
+                        / 2.0
                         * lower_size)
                     / (upper_size + lower_size)
             } else {
-                let dir = grid.ray_dir(angle.cast_f32());
-                // let tr = storage.load_grid_up(grid, cell, angle);
-                // let tr = trace(
-                //     dir,
-                //     grid.to_world(cell.cast_f32()),
-                //     Vec2::expr(0.0, grid.ray_len(dir)),
-                // );
-
-                let offset_0 = 2 * angle.cast_i32() - grid.angle_resolution.cast_i32();
-                let offset_1 = 2 * angle.cast_i32() - grid.angle_resolution.cast_i32() + 2;
-
                 let c_0 = Vec2::expr(cell.x + offset_0, cell.y / 2 + 1);
                 let c_1 = Vec2::expr(cell.x + offset_1, cell.y / 2 + 1);
 
@@ -457,20 +486,16 @@ fn main() {
                     (pos, r),
                 );
 
-                let incoming_radiance = over(
-                    tr_0,
-                    0.5 * storage.load_grid(next_grid, c_0, angle * 2)
-                        + 0.25
-                            * (storage.load_grid(next_grid, c_0 - Vec2::x(), angle * 2)
-                                + storage.load_grid(next_grid, c_0 + Vec2::x(), angle * 2)),
-                ) * upper_size
-                    + over(
-                        tr_1,
-                        0.5 * storage.load_grid(next_grid, c_1, angle * 2 + 1)
-                            + 0.25
-                                * (storage.load_grid(next_grid, c_1 - Vec2::x(), angle * 2 + 1)
-                                    + storage.load_grid(next_grid, c_1 + Vec2::x(), angle * 2 + 1)),
-                    ) * lower_size;
+                // let tr = storage.load_grid_up(grid, cell, angle);
+                // let tr = trace(
+                //     dir,
+                //     grid.to_world(cell.cast_f32()),
+                //     Vec2::expr(0.0, grid.ray_len(dir)),
+                // );
+
+                let incoming_radiance = over(tr_0, storage.load_grid(next_grid, c_0, angle * 2))
+                    * upper_size
+                    + over(tr_1, storage.load_grid(next_grid, c_1, angle * 2 + 1)) * lower_size;
 
                 incoming_radiance / (upper_size + lower_size)
             };
@@ -527,12 +552,12 @@ fn main() {
             is_tracing = !is_tracing;
         }
 
-        let r = 6.0; // (rt.tick as f32 / 60.0).sin() * 11.0 + 14.0;
-        let pos = rt.cursor_position;
+        let r = (rt.tick as f32 / 60.0).sin() * 12.0 + 14.0;
+        let pos = Vec2::new(512.0, 512.0);
 
         if is_tracing {
-            // trace_kernel.dispatch([grid_size[0], grid_size[1], 1], &(&pos, &r));
-        } else {
+            trace_kernel.dispatch([grid_size[0], grid_size[1], 1], &pos, &r);
+        } else if true {
             let mut time = 0.0;
             // for dir in 0..4 {
             //     init_merge_up.dispatch([BASE_SIZE.x, BASE_SIZE.y, 1], &dir, &r);
@@ -568,13 +593,18 @@ fn main() {
             display_frustrums = !display_frustrums;
         }
 
+        if rt.just_pressed_button(MouseButton::Right) {
+            println!("{:?}", rt.cursor_position);
+        }
+
         if rt.pressed_button(MouseButton::Left) {
+            // println!("{:?}", rt.cursor_position);
             let corner = FVec2::new(100.0, 100.0);
             let factor = 30.0;
-            // let cell = IVec2::new(30, 2);
-            let cell = ((FVec2::from(rt.cursor_position).yx() - corner) / factor)
-                .round()
-                .as_ivec2();
+            let cell = IVec2::new(30, 0);
+            // let cell = ((FVec2::from(rt.cursor_position).yx() - corner) / factor)
+            //     .round()
+            //     .as_ivec2();
 
             let mut all_rays = vec![
                 (
@@ -599,7 +629,7 @@ fn main() {
 
             let axis_x = FVec2::new(0.0, 1.0);
 
-            for c in 0..5 {
+            for c in 0..3 {
                 let mut next_rays = vec![];
                 for (angle, cell) in rays {
                     let axis_y = FVec2::new((1 << c) as f32, 0.0);
@@ -630,13 +660,19 @@ fn main() {
                         0.1,
                     ));
 
+                    let offset_0 = 2 * angle - angle_res;
+                    let offset_1 = 2 * angle - angle_res + 2;
+
                     if cell.y.rem_euclid(2) == 0 {
                         next_rays.push((angle * 2, IVec2::new(cell.x, cell.y / 2)));
                         next_rays.push((angle * 2 + 1, IVec2::new(cell.x, cell.y / 2)));
+                        next_rays
+                            .push((angle * 2, IVec2::new(cell.x + offset_0 * 2, cell.y / 2 + 1)));
+                        next_rays.push((
+                            angle * 2 + 1,
+                            IVec2::new(cell.x + offset_1 * 2, cell.y / 2 + 1),
+                        ));
                     } else {
-                        let offset_0 = 2 * angle - angle_res;
-                        let offset_1 = 2 * angle - angle_res + 2;
-
                         next_rays.push((
                             angle * 2,
                             IVec2::new(cell.x + offset_0, cell.y.div_euclid(2) + 1),
