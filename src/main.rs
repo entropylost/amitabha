@@ -46,7 +46,7 @@ fn trace(
     args: TraceArgs,
 ) -> (Expr<f32>, Expr<f32>) {
     let circles = [
-        (args.0, args.1, 50.0),
+        (args.0, args.1, 20.0),
         (Vec2::expr(1000.0, 1200.0), 16.0.expr(), 0.0),
     ];
     let best_t = interval.y.var();
@@ -334,15 +334,15 @@ fn main() {
     let num_cascades = BASE_SIZE.max_element().trailing_zeros();
     println!("Num cascades: {}", num_cascades);
 
-    let grid_size = [1024, 1024];
+    let grid_size = [256, 256];
     let app = App::new("Amitabha", grid_size)
-        .scale(2)
+        .scale(1)
         .dpi(2.0)
         .agx()
         .init();
 
-    let light_pos = Vec2::new(1024.0, 1123.0);
-    let focus = light_pos;
+    let mut light_pos = Vec2::new(1024.0, 1123.0);
+    let focus = Vec2::new(1024.0, 1123.0);
     let corner = Vec2::new(
         focus.x - grid_size[0] as f32 / 2.0,
         focus.y - grid_size[1] as f32 / 2.0,
@@ -428,7 +428,6 @@ fn main() {
             grid
         })
         .collect::<Vec<_>>();
-    println!("{:?}", grids_host);
 
     let data = DEVICE.create_buffer_from_fn(data_size as usize, |_i| RayData { color: 0.0 });
     let merge_up_data = DEVICE.create_buffer_from_fn(data_size as usize, |_i| MergeUpRayData {
@@ -523,23 +522,32 @@ fn main() {
 
             let radiance = if cell.y % 2 == 0 {
                 let c = Vec2::expr(cell.x + offset * 2, cell.y / 2 + 1);
-                let c_0 = Vec2::expr(cell.x + offset_0 * 2, cell.y / 2 + 1);
-                let c_1 = Vec2::expr(cell.x + offset_1 * 2, cell.y / 2 + 1);
 
-                let tr_0 = trace_frustrum(
+                let tr_0 = trace_between(
                     grid.to_world(cell.cast_f32()),
-                    next_grid.to_world(c.cast_f32()),
-                    grid.to_world(cell.cast_f32() - Vec2::x()),
-                    next_grid.to_world(c.cast_f32() - 4.0 * Vec2::<f32>::x().expr()),
+                    next_grid.to_world(c.cast_f32() - 2.0 * Vec2::<f32>::x().expr()),
                     (pos, r),
                 );
-                let tr_1 = trace_frustrum(
+                let tr_1 = trace_between(
                     grid.to_world(cell.cast_f32()),
-                    next_grid.to_world(c.cast_f32()),
-                    grid.to_world(cell.cast_f32() + Vec2::x()),
-                    next_grid.to_world(c.cast_f32() + 4.0 * Vec2::<f32>::x().expr()),
+                    next_grid.to_world(c.cast_f32() + 2.0 * Vec2::<f32>::x().expr()),
                     (pos, r),
                 );
+
+                // let tr_0 = trace_frustrum(
+                //     grid.to_world(cell.cast_f32()),
+                //     next_grid.to_world(c.cast_f32()),
+                //     grid.to_world(cell.cast_f32() - Vec2::x()),
+                //     next_grid.to_world(c.cast_f32() - 4.0 * Vec2::<f32>::x().expr()),
+                //     (pos, r),
+                // );
+                // let tr_1 = trace_frustrum(
+                //     grid.to_world(cell.cast_f32()),
+                //     next_grid.to_world(c.cast_f32()),
+                //     grid.to_world(cell.cast_f32() + Vec2::x()),
+                //     next_grid.to_world(c.cast_f32() + 4.0 * Vec2::<f32>::x().expr()),
+                //     (pos, r),
+                // );
 
                 // Grids are directly overlapping.
                 ((storage.load_grid(next_grid, Vec2::expr(cell.x, cell.y / 2), angle * 2)
@@ -570,20 +578,32 @@ fn main() {
                 let c_0 = Vec2::expr(cell.x + offset_0, cell.y / 2 + 1);
                 let c_1 = Vec2::expr(cell.x + offset_1, cell.y / 2 + 1);
 
-                let tr_0 = trace_frustrum(
+                let tr_0 = trace_between(
                     grid.to_world(cell.cast_f32()),
-                    next_grid.to_world(c.cast_f32()),
-                    grid.to_world(cell.cast_f32() - Vec2::x()),
-                    next_grid.to_world(c.cast_f32() - 2.0 * Vec2::<f32>::x().expr()),
+                    next_grid.to_world(c_0.cast_f32()),
                     (pos, r),
                 );
-                let tr_1 = trace_frustrum(
+
+                let tr_1 = trace_between(
                     grid.to_world(cell.cast_f32()),
-                    next_grid.to_world(c.cast_f32()),
-                    grid.to_world(cell.cast_f32() + Vec2::x()),
-                    next_grid.to_world(c.cast_f32() + 2.0 * Vec2::<f32>::x().expr()),
+                    next_grid.to_world(c_1.cast_f32()),
                     (pos, r),
                 );
+
+                // let tr_0 = trace_frustrum(
+                //     grid.to_world(cell.cast_f32()),
+                //     next_grid.to_world(c.cast_f32()),
+                //     grid.to_world(cell.cast_f32() - Vec2::x()),
+                //     next_grid.to_world(c.cast_f32() - 2.0 * Vec2::<f32>::x().expr()),
+                //     (pos, r),
+                // );
+                // let tr_1 = trace_frustrum(
+                //     grid.to_world(cell.cast_f32()),
+                //     next_grid.to_world(c.cast_f32()),
+                //     grid.to_world(cell.cast_f32() + Vec2::x()),
+                //     next_grid.to_world(c.cast_f32() + 2.0 * Vec2::<f32>::x().expr()),
+                //     (pos, r),
+                // );
 
                 // let tr = storage.load_grid_up(grid, cell, angle);
                 // let tr = trace(
@@ -704,102 +724,7 @@ fn main() {
         }
 
         if rt.pressed_button(MouseButton::Left) {
-            // println!("{:?}", rt.cursor_position);
-            let corner = FVec2::new(100.0, 100.0);
-            let factor = 30.0;
-            // let cell = IVec2::new(30, 0);
-            let cell = ((FVec2::from(rt.cursor_position).yx() - corner) / factor)
-                .round()
-                .as_ivec2();
-
-            let mut all_rays = vec![
-                (
-                    cell.yx().as_vec2(),
-                    cell.yx().as_vec2() + FVec2::new(1000.0, -1000.0),
-                    Vec3::splat(5.0),
-                    1.0,
-                ),
-                (
-                    cell.yx().as_vec2(),
-                    cell.yx().as_vec2() + FVec2::new(1000.0, 1000.0),
-                    Vec3::splat(5.0),
-                    1.0,
-                ),
-            ];
-            if display_frustrums {
-                all_rays.clear();
-            }
-            let cell = cell + IVec2::Y;
-
-            let mut rays = vec![(0_i32, cell)];
-
-            let axis_x = FVec2::new(0.0, 1.0);
-
-            for c in 0..4 {
-                let mut next_rays = vec![];
-                for (angle, cell) in rays {
-                    let axis_y = FVec2::new((1 << c) as f32, 0.0);
-                    let angle_res = 1_i32 << c;
-
-                    all_rays.push((
-                        axis_y * cell.y as f32 + axis_x * cell.x as f32,
-                        axis_y * (cell.y as f32 + 1.0)
-                            + axis_x * (cell.x + 2 * angle - angle_res + 1) as f32,
-                        colors[c],
-                        1.0,
-                    ));
-
-                    let f = if display_frustrums { 1 } else { 0 };
-
-                    all_rays.push((
-                        axis_y * cell.y as f32 + axis_x * (cell.x as f32 - f as f32 * 1.0),
-                        axis_y * (cell.y as f32 + 1.0)
-                            + axis_x * (cell.x + 2 * angle - angle_res - f) as f32,
-                        colors[c],
-                        0.1,
-                    ));
-                    all_rays.push((
-                        axis_y * cell.y as f32 + axis_x * (cell.x as f32 + f as f32 * 1.0),
-                        axis_y * (cell.y as f32 + 1.0)
-                            + axis_x * (cell.x + 2 * angle - angle_res + 2 + f) as f32,
-                        colors[c],
-                        0.1,
-                    ));
-
-                    let offset_0 = 2 * angle - angle_res;
-                    let offset_1 = 2 * angle - angle_res + 2;
-
-                    if cell.y.rem_euclid(2) == 0 {
-                        next_rays.push((angle * 2, IVec2::new(cell.x, cell.y / 2)));
-                        next_rays.push((angle * 2 + 1, IVec2::new(cell.x, cell.y / 2)));
-                        next_rays
-                            .push((angle * 2, IVec2::new(cell.x + offset_0 * 2, cell.y / 2 + 1)));
-                        next_rays.push((
-                            angle * 2 + 1,
-                            IVec2::new(cell.x + offset_1 * 2, cell.y / 2 + 1),
-                        ));
-                    } else {
-                        next_rays.push((
-                            angle * 2,
-                            IVec2::new(cell.x + offset_0, cell.y.div_euclid(2) + 1),
-                        ));
-                        next_rays.push((
-                            angle * 2 + 1,
-                            IVec2::new(cell.x + offset_1, cell.y.div_euclid(2) + 1),
-                        ));
-                    }
-                }
-                rays = next_rays;
-            }
-
-            for ray in &all_rays {
-                draw_line(
-                    ray.0 * factor + corner,
-                    ray.1 * factor + corner,
-                    ray.2,
-                    ray.3,
-                );
-            }
+            light_pos = rt.cursor_position;
         }
 
         rt.log_fps();

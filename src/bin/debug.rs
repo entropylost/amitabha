@@ -4,6 +4,8 @@ use glam::IVec2;
 use glam::UVec2;
 use glam::Vec2 as FVec2;
 use glam::Vec2Swizzles;
+use image::ImageReader;
+use luisa::lang::types::vector::Vec4;
 use luisa::lang::types::vector::{Vec2, Vec3};
 use sefirot::prelude::*;
 use sefirot_testbed::App;
@@ -18,11 +20,35 @@ fn main() {
         .agx()
         .init();
 
-    let factor = 8.0;
-    let corner =
-        -(FVec2::new(1024.0, 1123.0) - FVec2::splat(128.0)) * factor + FVec2::new(4.0, 4.0);
+    let dim = 128;
+
+    let factor = (grid_size[0] / dim) as f32;
+    let corner = -(FVec2::new(1024.0 - 64.0 + 16.0, 1123.0) - FVec2::splat(dim as f32 / 2.0))
+        * factor
+        + FVec2::splat(factor / 2.0);
+
+    let bg = ImageReader::open("diff256.png")
+        .unwrap()
+        .decode()
+        .unwrap()
+        .to_rgb32f();
+    let mut bg2 = vec![];
+    for j in 64..192 {
+        for i in 16..128 + 16 {
+            bg2.push(Vec3::from(bg.get_pixel(i, j).0));
+        }
+    }
+    let bg = DEVICE.create_buffer_from_slice(&bg2);
 
     let lines_endpoints = [487, 268, 49, 1024, 1565, 1784, 2000];
+
+    let draw_bg = DEVICE.create_kernel::<fn()>(&track!(|| {
+        let pos = dispatch_id().xy();
+        app.display().write(
+            pos,
+            bg.read(pos.x / (factor as u32) + pos.y / (factor as u32) * dim),
+        );
+    }));
 
     let draw_line_t = DEVICE.create_kernel::<fn(Vec2<f32>, Vec2<f32>, Vec3<f32>)>(&track!(
         |start, end, color| {
@@ -75,6 +101,8 @@ fn main() {
     let light = (FVec2::new(1024.0, 1123.0), 4.0);
 
     app.run(|rt, _scope| {
+        draw_bg.dispatch([grid_size[0] as u32, grid_size[1] as u32, 1]);
+
         if rt.just_pressed_key(KeyCode::KeyF) {
             display_frustrums = !display_frustrums;
         }
@@ -124,20 +152,20 @@ fn main() {
 
                 let f = if display_frustrums { 1 } else { 0 };
 
-                all_rays.push((
-                    axis_y * cell.y as f32 + axis_x * (cell.x as f32 - f as f32 * 1.0),
-                    axis_y * (cell.y as f32 + 1.0)
-                        + axis_x * (cell.x + 2 * angle - angle_res - f) as f32,
-                    colors[c],
-                    0.1,
-                ));
-                all_rays.push((
-                    axis_y * cell.y as f32 + axis_x * (cell.x as f32 + f as f32 * 1.0),
-                    axis_y * (cell.y as f32 + 1.0)
-                        + axis_x * (cell.x + 2 * angle - angle_res + 2 + f) as f32,
-                    colors[c],
-                    0.1,
-                ));
+                // all_rays.push((
+                //     axis_y * cell.y as f32 + axis_x * (cell.x as f32 - f as f32 * 1.0),
+                //     axis_y * (cell.y as f32 + 1.0)
+                //         + axis_x * (cell.x + 2 * angle - angle_res - f) as f32,
+                //     colors[c],
+                //     0.1,
+                // ));
+                // all_rays.push((
+                //     axis_y * cell.y as f32 + axis_x * (cell.x as f32 + f as f32 * 1.0),
+                //     axis_y * (cell.y as f32 + 1.0)
+                //         + axis_x * (cell.x + 2 * angle - angle_res + 2 + f) as f32,
+                //     colors[c],
+                //     0.1,
+                // ));
 
                 let offset_0 = 2 * angle - angle_res;
                 let offset_1 = 2 * angle - angle_res + 2;
@@ -164,10 +192,10 @@ fn main() {
             rays = next_rays;
         }
 
-        for l in &lines_endpoints {
-            let wpos_l = *l as f32 + (1123.0 - 1024.0);
-            draw_line(light.0, FVec2::new(0.0, wpos_l), Vec3::splat(5.0), 1.0);
-        }
+        // for l in &lines_endpoints {
+        //     let wpos_l = *l as f32 + (1123.0 - 1024.0);
+        //     draw_line(light.0, FVec2::new(0.0, wpos_l), Vec3::splat(5.0), 1.0);
+        // }
 
         for ray in &all_rays {
             draw_line(ray.0, ray.1, ray.2, ray.3);
