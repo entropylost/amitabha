@@ -46,7 +46,7 @@ fn trace(
     args: TraceArgs,
 ) -> (Expr<f32>, Expr<f32>) {
     let circles = [
-        (args.0, args.1, 20.0),
+        (args.0, args.1, 50.0),
         (Vec2::expr(1000.0, 1200.0), 16.0.expr(), 0.0),
     ];
     let best_t = interval.y.var();
@@ -98,6 +98,31 @@ fn trace_between(
 }
 
 #[tracked]
+fn trace_frustrum_b(
+    start_a: Expr<Vec2<f32>>,
+    end_a: Expr<Vec2<f32>>,
+    start_b: Expr<Vec2<f32>>,
+    end_b: Expr<Vec2<f32>>,
+    args: TraceArgs,
+) -> (Expr<f32>, Expr<f32>) {
+    let color = 0.0_f32.var();
+    let transmittance = 0.0_f32.var();
+    let (c, t) = trace_between(start_a, end_a, args);
+    *color += c;
+    *transmittance += t;
+    let (c, t) = trace_between(start_b, end_b, args);
+    *color += c;
+    *transmittance += t;
+    let (c, t) = trace_between(start_a, end_b, args);
+    *color += c;
+    *transmittance += t;
+    let (c, t) = trace_between(start_b, end_a, args);
+    *color += c;
+    *transmittance += t;
+    (color / 4.0, transmittance / 4.0)
+}
+
+#[tracked]
 fn trace_frustrum(
     start_a: Expr<Vec2<f32>>,
     end_a: Expr<Vec2<f32>>,
@@ -105,7 +130,7 @@ fn trace_frustrum(
     end_b: Expr<Vec2<f32>>,
     args: TraceArgs,
 ) -> (Expr<f32>, Expr<f32>) {
-    let num_samples = 10_u32;
+    let num_samples = 1_u32;
     let color = 0.0_f32.var();
     let transmittance = 0.0_f32.var();
     for i in 0_u32..num_samples {
@@ -309,12 +334,44 @@ fn main() {
     let num_cascades = BASE_SIZE.max_element().trailing_zeros();
     println!("Num cascades: {}", num_cascades);
 
-    let grid_size = [2048, 2048];
+    let grid_size = [1024, 1024];
     let app = App::new("Amitabha", grid_size)
-        .scale(1)
+        .scale(2)
         .dpi(2.0)
         .agx()
         .init();
+
+    let light_pos = Vec2::new(1024.0, 1123.0);
+    let focus = light_pos;
+    let corner = Vec2::new(
+        focus.x - grid_size[0] as f32 / 2.0,
+        focus.y - grid_size[1] as f32 / 2.0,
+    );
+
+    let trace2_kernel = DEVICE.create_kernel::<fn(Vec2<f32>, f32)>(&track!(|vpos, r| {
+        let total_color = 0.0_f32.var();
+        let pos = dispatch_id().xy().cast_f32() + corner;
+        for i in 0_u32.expr()..grid_size[0].expr() {
+            let i: Expr<u32> = i;
+            let ray_pos = (2.0 * i.cast_f32() + 1.0) / grid_size[0] as f32 - 1.0;
+
+            let upper_ray_pos = (2.0 * i.cast_f32() + 2.0) / grid_size[0] as f32 - 1.0;
+            let lower_ray_pos = 2.0 * i.cast_f32() / grid_size[0] as f32 - 1.0;
+
+            let angle_size = upper_ray_pos.atan() - lower_ray_pos.atan();
+
+            let ray_dir = Vec2::expr(1.0, ray_pos).normalize();
+            let (color, _t) = trace(
+                ray_dir,
+                pos,
+                Vec2::new(0.0, f32::INFINITY).expr(),
+                (vpos, r),
+            );
+            *total_color += color * angle_size;
+        }
+        app.display()
+            .write(dispatch_id().xy(), Vec3::splat_expr(total_color));
+    }));
 
     let trace_kernel = DEVICE.create_kernel::<fn(Vec2<f32>, f32)>(&track!(|vpos, r| {
         let num_dirs = grid_size[0] * 6;
@@ -322,7 +379,7 @@ fn main() {
         let offset = pcgf(dispatch_id().x + dispatch_id().y * grid_size[0]);
 
         let total_color = 0.0_f32.var();
-        let pos = dispatch_id().xy().cast_f32();
+        let pos = dispatch_id().xy().cast_f32() + corner;
         for i in 0_u32.expr()..num_dirs.expr() {
             let i: Expr<u32> = i;
             let ray_angle = (i.cast_f32() + offset) / num_dirs as f32 * TAU;
@@ -341,8 +398,9 @@ fn main() {
         );
     }));
 
-    let mut grids_host_lv = (0..4)
-        .map(|i| Grid::first_level(FVec2::from_angle(i as f32 * TAU / 4.0)))
+    let mut grids_host_lv = [FVec2::X, FVec2::Y, FVec2::NEG_X, FVec2::NEG_Y]
+        .into_iter()
+        .map(|i| Grid::first_level(i))
         .collect::<Vec<_>>();
     let mut grids_host = vec![];
     for _c in 0..=num_cascades {
@@ -370,6 +428,7 @@ fn main() {
             grid
         })
         .collect::<Vec<_>>();
+    println!("{:?}", grids_host);
 
     let data = DEVICE.create_buffer_from_fn(data_size as usize, |_i| RayData { color: 0.0 });
     let merge_up_data = DEVICE.create_buffer_from_fn(data_size as usize, |_i| MergeUpRayData {
@@ -547,11 +606,14 @@ fn main() {
         }));
 
     let final_display = DEVICE.create_kernel::<fn()>(&track!(|| {
-        let pos = dispatch_id().xy().cast_f32();
+        let pos = dispatch_id().xy().cast_f32() + corner;
         let radiance = 0.0_f32.var();
         for i in 0_u32..4_u32 {
             let grid = storage.grid_at(0.expr(), i);
-            let cell = grid.from_world(pos + grid.axis_y).round().cast_i32();
+            let cell = grid.from_world(pos + grid.axis_y);
+            // let a = (cell - cell.round()).abs().reduce_max() <= 0.00001;
+            // lc_assert!(a);
+            let cell = cell.round().cast_i32();
             *radiance += storage.load_grid(grid, cell, 0_u32.expr());
         }
         app.display()
@@ -595,13 +657,12 @@ fn main() {
         // 8.0: 1018 = 1024 - 6
         // 4.0: 1022 = 1024 - 2
 
-        let r = 16.0; // (rt.tick as f32 / 60.0).sin() * 12.0 + 14.0;
-        let pos = rt.cursor_position;
-        // Vec2::new(1144.0, 1022.0);
-        // 1019.25, 1606.28
+        let r = 4.0; // (rt.tick as f32 / 60.0).sin() * 12.0 + 14.0;
+                     // Vec2::new(1144.0, 1022.0);
+                     // 1019.25, 1606.28
 
         if is_tracing {
-            trace_kernel.dispatch([grid_size[0], grid_size[1], 1], &pos, &r);
+            trace_kernel.dispatch([grid_size[0], grid_size[1], 1], &light_pos, &r);
         } else if true {
             let mut time = 0.0;
             // for dir in 0..4 {
@@ -619,7 +680,7 @@ fn main() {
                             [BASE_SIZE.x, BASE_SIZE.y >> i, 1 << i],
                             &i,
                             &dir,
-                            &pos,
+                            &light_pos,
                             &r,
                         )
                     })
