@@ -23,17 +23,18 @@ fn intersect_circle(
     ray_start: Expr<Vec2<f32>>,
     ray_dir: Expr<Vec2<f32>>,
     radius: Expr<f32>,
-) -> (Expr<f32>, Expr<f32>, Expr<bool>) {
+) -> (Expr<f32>, Expr<f32>, Expr<f32>, Expr<bool>) {
     let dist_to_parallel = -ray_start.dot(ray_dir);
     let min_point = ray_start + dist_to_parallel * ray_dir;
     let dist_to_center = min_point.length();
-    if dist_to_center > radius {
-        (0.0.expr(), 0.0.expr(), false.expr())
+    let penetration = radius - dist_to_center;
+    if penetration < 0.0.expr() {
+        (0.0.expr(), 0.0.expr(), penetration, false.expr())
     } else {
         let dist_to_intersection = (radius.sqr() - dist_to_center.sqr()).sqrt();
         let min_t = dist_to_parallel - dist_to_intersection;
         let max_t = dist_to_parallel + dist_to_intersection;
-        (min_t, max_t, true.expr())
+        (min_t, max_t, penetration, true.expr())
     }
 }
 
@@ -46,16 +47,17 @@ fn trace(
     args: TraceArgs,
 ) -> (Expr<f32>, Expr<f32>) {
     let circles = [
-        (args.0, args.1, 20.0),
+        (args.0, args.1, 100.0),
         (Vec2::expr(1000.0, 1200.0), 16.0.expr(), 0.0),
     ];
     let best_t = interval.y.var();
     let best_color = 0.0_f32.var();
     for (center, radius, color) in circles.iter() {
-        let (min_t, max_t, hit) = intersect_circle(ray_start - center, ray_dir, *radius);
+        let (min_t, max_t, penetration, hit) =
+            intersect_circle(ray_start - center, ray_dir, *radius);
         if hit && max_t > interval.x && min_t < best_t {
             *best_t = min_t;
-            *best_color = *color;
+            *best_color = *color * (luisa::min(penetration / 2.0, 1.0));
         }
     }
     (
@@ -334,7 +336,7 @@ fn main() {
     let num_cascades = BASE_SIZE.max_element().trailing_zeros();
     println!("Num cascades: {}", num_cascades);
 
-    let grid_size = [256, 256];
+    let grid_size = [2048, 2048];
     let app = App::new("Amitabha", grid_size)
         .scale(1)
         .dpi(2.0)
@@ -342,7 +344,7 @@ fn main() {
         .init();
 
     let mut light_pos = Vec2::new(1024.0, 1123.0);
-    let focus = Vec2::new(1024.0, 1123.0);
+    let focus = Vec2::new(1024.0, 1024.0);
     let corner = Vec2::new(
         focus.x - grid_size[0] as f32 / 2.0,
         focus.y - grid_size[1] as f32 / 2.0,

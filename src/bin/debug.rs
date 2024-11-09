@@ -142,30 +142,30 @@ fn main() {
                 let axis_y = FVec2::new((1 << c) as f32, 0.0);
                 let angle_res = 1_i32 << c;
 
-                all_rays.push((
-                    axis_y * cell.y as f32 + axis_x * cell.x as f32,
-                    axis_y * (cell.y as f32 + 1.0)
-                        + axis_x * (cell.x + 2 * angle - angle_res + 1) as f32,
-                    colors[c],
-                    1.0,
-                ));
+                // all_rays.push((
+                //     axis_y * cell.y as f32 + axis_x * cell.x as f32,
+                //     axis_y * (cell.y as f32 + 1.0)
+                //         + axis_x * (cell.x + 2 * angle - angle_res + 1) as f32,
+                //     colors[c],
+                //     1.0,
+                // ));
 
                 let f = if display_frustrums { 1 } else { 0 };
 
-                // all_rays.push((
-                //     axis_y * cell.y as f32 + axis_x * (cell.x as f32 - f as f32 * 1.0),
-                //     axis_y * (cell.y as f32 + 1.0)
-                //         + axis_x * (cell.x + 2 * angle - angle_res - f) as f32,
-                //     colors[c],
-                //     0.1,
-                // ));
-                // all_rays.push((
-                //     axis_y * cell.y as f32 + axis_x * (cell.x as f32 + f as f32 * 1.0),
-                //     axis_y * (cell.y as f32 + 1.0)
-                //         + axis_x * (cell.x + 2 * angle - angle_res + 2 + f) as f32,
-                //     colors[c],
-                //     0.1,
-                // ));
+                all_rays.push((
+                    axis_y * cell.y as f32 + axis_x * (cell.x as f32 - f as f32 * 1.0),
+                    axis_y * (cell.y as f32 + 1.0)
+                        + axis_x * (cell.x + 2 * angle - angle_res - f) as f32,
+                    colors[c],
+                    1.0,
+                ));
+                all_rays.push((
+                    axis_y * cell.y as f32 + axis_x * (cell.x as f32 + f as f32 * 1.0),
+                    axis_y * (cell.y as f32 + 1.0)
+                        + axis_x * (cell.x + 2 * angle - angle_res + 2 + f) as f32,
+                    colors[c],
+                    1.0,
+                ));
 
                 let offset_0 = 2 * angle - angle_res;
                 let offset_1 = 2 * angle - angle_res + 2;
