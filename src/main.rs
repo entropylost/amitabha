@@ -46,8 +46,8 @@ fn trace(
     args: TraceArgs,
 ) -> (Expr<f32>, Expr<f32>) {
     let circles = [
-        (args.0, args.1, 50.0),
-        (Vec2::expr(1000.0, 1200.0), 32.0.expr(), 0.0),
+        (args.0, args.1, 20.0),
+        (Vec2::expr(1000.0, 1200.0), 16.0.expr(), 0.0),
     ];
     let best_t = interval.y.var();
     let best_color = 0.0_f32.var();
@@ -595,8 +595,9 @@ fn main() {
         // 8.0: 1018 = 1024 - 6
         // 4.0: 1022 = 1024 - 2
 
-        let r = 4.0; // (rt.tick as f32 / 60.0).sin() * 12.0 + 14.0;
-        let pos = Vec2::new(1144.0, 1022.0);
+        let r = 16.0; // (rt.tick as f32 / 60.0).sin() * 12.0 + 14.0;
+        let pos = rt.cursor_position;
+        // Vec2::new(1144.0, 1022.0);
         // 1019.25, 1606.28
 
         if is_tracing {
