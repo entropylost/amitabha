@@ -6,6 +6,6 @@ default-run = "amitabha"
 
 [dependencies]
 glam = { version = "0.27.0" }
-sefirot = { path = "../sefirot/sefirot", features = ["glam", "trace"] }
-sefirot_testbed = { path = "../sefirot/testbed" }
+keter = { path = "../sefirot/keter", features = ["glam", "trace"] }
+keter_testbed = { path = "../sefirot/testbed" }
 image = "0.25.5"

@@ -3,15 +3,10 @@
 
 use std::f32::consts::TAU;
 
-use glam::IVec2;
-use glam::UVec2;
-use glam::Vec2 as FVec2;
-use glam::Vec2Swizzles;
-use luisa::lang::types::vector::{Vec2, Vec3};
-use sefirot::prelude::*;
-use sefirot_testbed::App;
-use sefirot_testbed::KeyCode;
-use sefirot_testbed::MouseButton;
+use glam::{IVec2, UVec2, Vec2 as FVec2, Vec2Swizzles};
+use keter::lang::types::vector::{Vec2, Vec3};
+use keter::prelude::*;
+use keter_testbed::{App, KeyCode, MouseButton};
 use utils::pcgf;
 
 mod utils;
@@ -57,7 +52,7 @@ fn trace(
             intersect_circle(ray_start - center, ray_dir, *radius);
         if hit && max_t > interval.x && min_t < best_t {
             *best_t = min_t;
-            *best_color = *color * (luisa::min(penetration / 2.0, 1.0));
+            *best_color = *color * (keter::min(penetration / 2.0, 1.0));
         }
     }
     (

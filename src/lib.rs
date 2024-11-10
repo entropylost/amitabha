@@ -1,0 +1,226 @@
+#![allow(clippy::type_complexity)]
+
+// TODO: Can change u32 to use to u16?
+
+use std::marker::PhantomData;
+
+use keter::graph::NodeConfigs;
+use keter::lang::types::vector::Vec2;
+use keter::prelude::*;
+use keter::runtime::{AsKernelArg, KernelParameter};
+
+pub mod color;
+use color::{MergeFluence, Radiance};
+pub mod trace;
+use trace::Tracer;
+pub mod storage;
+use storage::RadianceStorage;
+
+#[derive(Debug, Clone, Copy, Value)]
+#[repr(C)]
+pub struct Grid {
+    pub size: Vec2<u32>,
+    pub directions: u32,
+}
+impl Grid {
+    pub fn new(size: Vec2<u32>, directions: u32) -> Grid {
+        Grid { size, directions }
+    }
+    #[tracked]
+    pub fn expr(size: Expr<Vec2<u32>>, directions: Expr<u32>) -> Expr<Grid> {
+        Grid::from_comps_expr(GridComps { size, directions })
+    }
+}
+impl GridExpr {
+    #[tracked]
+    pub fn next(self) -> Expr<Grid> {
+        Grid::from_comps_expr(GridComps {
+            size: Vec2::expr(self.size.x, self.size.y / 2),
+            directions: self.directions * 2,
+        })
+    }
+    #[tracked]
+    pub fn offset(self, dir: Expr<u32>) -> Expr<u32> {
+        2 * dir - self.directions + 1
+    }
+    #[tracked]
+    pub fn offset_f(self, dir: Expr<f32>) -> Expr<f32> {
+        2.0 * dir - self.directions.cast_f32() + 1.0
+    }
+    #[tracked]
+    pub fn ray_angle(self, spacing: Expr<f32>, dir: Expr<f32>) -> Expr<f32> {
+        self.offset_f(dir).atan2(spacing)
+    }
+    #[tracked]
+    pub fn angle_size(self, spacing: Expr<f32>, dir: Expr<u32>) -> Expr<f32> {
+        let upper = self.ray_angle(spacing, dir.cast_f32() + 0.5);
+        let lower = self.ray_angle(spacing, dir.cast_f32() - 0.5);
+        upper - lower
+    }
+}
+
+#[derive(Debug, Clone, Copy, Value)]
+#[repr(C)]
+pub struct Probe {
+    pub cell: Vec2<u32>,
+    pub dir: u32,
+}
+impl Probe {
+    pub fn expr(cell: Expr<Vec2<u32>>, dir: Expr<u32>) -> Expr<Probe> {
+        Probe::from_comps_expr(ProbeComps { cell, dir })
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DispatchAxis {
+    X = 0,
+    Y = 1,
+    Z = 2,
+}
+impl DispatchAxis {
+    fn get(self) -> Expr<u32> {
+        match self {
+            DispatchAxis::X => dispatch_id().x,
+            DispatchAxis::Y => dispatch_id().y,
+            DispatchAxis::Z => dispatch_id().z,
+        }
+    }
+    fn set(self, array: &mut [u32; 3], value: u32) {
+        array[self as usize] = value;
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct MergeKernelSettings<'a, F: MergeFluence, T: Tracer<F>, S: RadianceStorage<F::Radiance>> {
+    pub dir_axis: DispatchAxis,
+    pub cell_axis: [DispatchAxis; 2],
+    pub block_size: [u32; 3],
+    // TODO: Use boxing.
+    pub storage: &'a S,
+    pub tracer: &'a T,
+    // pub split_even: bool,
+    pub _marker: PhantomData<F>,
+}
+
+pub struct MergeKernel<F: MergeFluence, T: Tracer<F>, S: RadianceStorage<F::Radiance>> {
+    kernel: Kernel<
+        fn(
+            Grid,
+            <T::Params as KernelParameter>::Arg,
+            <S::Params as KernelParameter>::Arg,
+            <S::Params as KernelParameter>::Arg,
+        ),
+    >,
+    dir_axis: DispatchAxis,
+    cell_axis: [DispatchAxis; 2],
+    _marker: PhantomData<F>,
+}
+
+impl<F: MergeFluence, T: Tracer<F>, S: RadianceStorage<F::Radiance>>
+    MergeKernelSettings<'_, F, T, S>
+{
+    pub fn build_kernel(&self) -> MergeKernel<F, T, S> {
+        let kernel = DEVICE.create_kernel::<fn(
+            Grid,
+            <T::Params as KernelParameter>::Arg,
+            <S::Params as KernelParameter>::Arg,
+            <S::Params as KernelParameter>::Arg,
+        )>(&track!(
+            |grid, tracer_params, radiance_params, next_radiance_params| {
+                set_block_size(self.block_size);
+                let cell = Vec2::expr(self.cell_axis[0].get(), self.cell_axis[1].get());
+                let dir = self.dir_axis.get();
+                let probe = Probe::expr(cell, dir);
+
+                let value = merge(
+                    grid,
+                    probe,
+                    (self.storage, &next_radiance_params),
+                    (self.tracer, &tracer_params),
+                );
+                self.storage.store(&radiance_params, grid, probe, value);
+            }
+        ));
+        MergeKernel {
+            kernel,
+            dir_axis: self.dir_axis,
+            cell_axis: self.cell_axis,
+            _marker: PhantomData,
+        }
+    }
+}
+impl<F: MergeFluence, T: Tracer<F>, S: RadianceStorage<F::Radiance>> MergeKernel<F, T, S> {
+    pub fn dispatch(
+        &self,
+        grid: Grid,
+        tracer_params: &impl AsKernelArg<Output = <T::Params as KernelParameter>::Arg>,
+        radiance_params: &impl AsKernelArg<Output = <S::Params as KernelParameter>::Arg>,
+        next_radiance_params: &impl AsKernelArg<Output = <S::Params as KernelParameter>::Arg>,
+    ) -> NodeConfigs<'static> {
+        let mut dispatch_size = [0; 3];
+        self.dir_axis.set(&mut dispatch_size, grid.directions);
+        self.cell_axis[0].set(&mut dispatch_size, grid.size.x);
+        self.cell_axis[1].set(&mut dispatch_size, grid.size.y);
+        assert!(dispatch_size.iter().all(|&x| x > 0));
+        self.kernel
+            .dispatch_async(
+                dispatch_size,
+                &grid,
+                tracer_params,
+                radiance_params,
+                next_radiance_params,
+            )
+            .into_node_configs()
+    }
+}
+
+// TODO: Switch to using half directions.
+#[tracked]
+pub fn merge<F: MergeFluence, S: RadianceStorage<F::Radiance>, T: Tracer<F>>(
+    grid: Expr<Grid>,
+    probe: Expr<Probe>,
+    (storage, next_radiance_params): (&S, &S::Params),
+    (tracer, tracer_params): (&T, &T::Params),
+) -> Expr<F::Radiance> {
+    let next_grid = grid.next();
+    let load_next = |probe: Expr<Probe>| storage.load(next_radiance_params, next_grid, probe);
+
+    let dir = probe.dir;
+    let cell = probe.cell;
+    let lower_dir = dir * 2;
+    let upper_dir = dir * 2 + 1;
+    let offset = grid.offset(dir);
+    let start = Vec2::expr(cell.x, cell.y / 2);
+    if cell.y % 2 == 0 {
+        let end = start + Vec2::expr(offset * 2, 1);
+
+        let [lower, upper] = tracer.trace(tracer_params, grid, probe);
+
+        // Could possibly be better as ((a + b) + (c + d)) * 0.5 instead of (a + b).mul_add(0.5, (c + d) * 0.5)
+        F::Radiance::merge(
+            F::Radiance::blend(
+                load_next(Probe::expr(start, lower_dir)),
+                F::over_radiance(
+                    lower,
+                    load_next(Probe::expr(end - 2 * Vec2::x(), lower_dir)),
+                ),
+            ),
+            F::Radiance::blend(
+                load_next(Probe::expr(start, upper_dir)),
+                F::over_radiance(
+                    upper,
+                    load_next(Probe::expr(end + 2 * Vec2::x(), upper_dir)),
+                ),
+            ),
+        )
+    } else {
+        let end = start + Vec2::expr(offset, 1);
+
+        let [lower, upper] = tracer.trace(tracer_params, grid, probe);
+
+        F::Radiance::merge(
+            F::over_radiance(lower, load_next(Probe::expr(end - Vec2::x(), lower_dir))),
+            F::over_radiance(upper, load_next(Probe::expr(end + Vec2::x(), upper_dir))),
+        )
+    }
+}

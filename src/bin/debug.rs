@@ -1,16 +1,10 @@
 use std::f32::consts::TAU;
 
-use glam::IVec2;
-use glam::UVec2;
-use glam::Vec2 as FVec2;
-use glam::Vec2Swizzles;
+use glam::{IVec2, UVec2, Vec2 as FVec2, Vec2Swizzles};
 use image::ImageReader;
-use luisa::lang::types::vector::Vec4;
-use luisa::lang::types::vector::{Vec2, Vec3};
-use sefirot::prelude::*;
-use sefirot_testbed::App;
-use sefirot_testbed::KeyCode;
-use sefirot_testbed::MouseButton;
+use keter::lang::types::vector::{Vec2, Vec3, Vec4};
+use keter::prelude::*;
+use keter_testbed::{App, KeyCode, MouseButton};
 
 fn main() {
     let grid_size = [2048, 2048];

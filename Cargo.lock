@@ -58,8 +58,8 @@ version = "0.1.0"
 dependencies = [
  "glam",
  "image",
- "sefirot",
- "sefirot_testbed",
+ "keter",
+ "keter_testbed",
 ]
 
 [[package]]
@@ -580,20 +580,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "96a6ac251f4a2aca6b3f91340350eab87ae57c3f127ffeb585e92bd336717991"
 
 [[package]]
-name = "dashmap"
-version = "6.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5041cc499144891f3790297212f32a74fb938e5136a14943f338ef9e0ae276cf"
-dependencies = [
- "cfg-if",
- "crossbeam-utils",
- "hashbrown 0.14.5",
- "lock_api",
- "once_cell",
- "parking_lot_core",
-]
-
-[[package]]
 name = "digest"
 version = "0.10.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -623,12 +609,6 @@ name = "downcast-rs"
 version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "75b325c5dbd37f80359721ad39aca5a29fb04c89279657cffdda8736d0c0b9d2"
-
-[[package]]
-name = "dyn-clone"
-version = "1.0.17"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0d6ef0072f8a535281e4876be788938b528e9a1d43900b82c2569af7da799125"
 
 [[package]]
 name = "either"
@@ -739,15 +719,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "aa9a19cbb55df58761df49b23516a86d432839add4af60fc256da840f66ed35b"
 
 [[package]]
-name = "generational-arena"
-version = "0.2.9"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "877e94aff08e743b651baaea359664321055749b398adff8740a7399af7796e7"
-dependencies = [
- "cfg-if",
-]
-
-[[package]]
 name = "generic-array"
 version = "0.14.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -821,12 +792,6 @@ checksum = "8a9ee70c43aaf417c914396645a0fa852624801b24ebb7ae78fe8272889ac888"
 
 [[package]]
 name = "hashbrown"
-version = "0.14.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e5274423e17b7c9fc20b6e7e208532f9b19825d82dfd615708b70edd83df41f1"
-
-[[package]]
-name = "hashbrown"
 version = "0.15.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3a9bfc1af68b1726ea47d3d5109de126281def866b33970e10fbab11b5dafab3"
@@ -882,15 +847,6 @@ dependencies = [
  "block2",
  "dispatch",
  "objc2",
-]
-
-[[package]]
-name = "id_newtype"
-version = "0.1.0"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.87",
 ]
 
 [[package]]
@@ -1042,6 +998,35 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "078e285eafdfb6c4b434e0d31e8cfcb5115b651496faca5749b88fafd4f23bfd"
 
 [[package]]
+name = "keter"
+version = "0.1.0"
+dependencies = [
+ "cuda_device_sys",
+ "keter_macro",
+ "luisa_compute",
+ "parking_lot",
+ "petgraph",
+ "static_assertions",
+ "tracing",
+]
+
+[[package]]
+name = "keter_macro"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+]
+
+[[package]]
+name = "keter_testbed"
+version = "0.1.0"
+dependencies = [
+ "keter",
+ "winit",
+]
+
+[[package]]
 name = "lazy_static"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1082,7 +1067,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4979f22fdb869068da03c9f7528f8297c6fd2606bc3a4affe42e6a823fdb8da4"
 dependencies = [
  "cfg-if",
- "windows-targets 0.52.6",
+ "windows-targets 0.48.5",
 ]
 
 [[package]]
@@ -1136,7 +1121,7 @@ dependencies = [
 [[package]]
 name = "luisa_compute"
 version = "0.1.1-alpha.1"
-source = "git+https://github.com/entropylost/luisa-compute-rs?branch=nocpu#eb26b150b9ac54ed06b712886023410b1ea4e521"
+source = "git+https://github.com/entropylost/luisa-compute-rs?branch=main#12b09d52ea689a8376aa0f4622fd8e989991256e"
 dependencies = [
  "bumpalo",
  "env_logger",
@@ -1163,7 +1148,7 @@ dependencies = [
 [[package]]
 name = "luisa_compute_api_types"
 version = "0.1.1-alpha.1"
-source = "git+https://github.com/entropylost/luisa-compute-rs?branch=nocpu#eb26b150b9ac54ed06b712886023410b1ea4e521"
+source = "git+https://github.com/entropylost/luisa-compute-rs?branch=main#12b09d52ea689a8376aa0f4622fd8e989991256e"
 dependencies = [
  "bitflags 2.6.0",
  "cbindgen",
@@ -1173,7 +1158,7 @@ dependencies = [
 [[package]]
 name = "luisa_compute_backend"
 version = "0.1.1-alpha.1"
-source = "git+https://github.com/entropylost/luisa-compute-rs?branch=nocpu#eb26b150b9ac54ed06b712886023410b1ea4e521"
+source = "git+https://github.com/entropylost/luisa-compute-rs?branch=main#12b09d52ea689a8376aa0f4622fd8e989991256e"
 dependencies = [
  "lazy_static",
  "libc",
@@ -1189,7 +1174,7 @@ dependencies = [
 [[package]]
 name = "luisa_compute_derive"
 version = "0.1.1-alpha.1"
-source = "git+https://github.com/entropylost/luisa-compute-rs?branch=nocpu#eb26b150b9ac54ed06b712886023410b1ea4e521"
+source = "git+https://github.com/entropylost/luisa-compute-rs?branch=main#12b09d52ea689a8376aa0f4622fd8e989991256e"
 dependencies = [
  "luisa_compute_derive_impl",
  "syn 2.0.87",
@@ -1198,7 +1183,7 @@ dependencies = [
 [[package]]
 name = "luisa_compute_derive_impl"
 version = "0.1.1-alpha.1"
-source = "git+https://github.com/entropylost/luisa-compute-rs?branch=nocpu#eb26b150b9ac54ed06b712886023410b1ea4e521"
+source = "git+https://github.com/entropylost/luisa-compute-rs?branch=main#12b09d52ea689a8376aa0f4622fd8e989991256e"
 dependencies = [
  "prettyplease",
  "proc-macro2",
@@ -1209,7 +1194,7 @@ dependencies = [
 [[package]]
 name = "luisa_compute_ir"
 version = "0.1.1-alpha.1"
-source = "git+https://github.com/entropylost/luisa-compute-rs?branch=nocpu#eb26b150b9ac54ed06b712886023410b1ea4e521"
+source = "git+https://github.com/entropylost/luisa-compute-rs?branch=main#12b09d52ea689a8376aa0f4622fd8e989991256e"
 dependencies = [
  "base64ct",
  "bincode",
@@ -1231,7 +1216,7 @@ dependencies = [
 [[package]]
 name = "luisa_compute_sys"
 version = "0.1.1-alpha.1"
-source = "git+https://github.com/entropylost/luisa-compute-rs?branch=nocpu#eb26b150b9ac54ed06b712886023410b1ea4e521"
+source = "git+https://github.com/entropylost/luisa-compute-rs?branch=main#12b09d52ea689a8376aa0f4622fd8e989991256e"
 dependencies = [
  "cmake",
 ]
@@ -1239,7 +1224,7 @@ dependencies = [
 [[package]]
 name = "luisa_compute_track"
 version = "0.1.1-alpha.1"
-source = "git+https://github.com/entropylost/luisa-compute-rs?branch=nocpu#eb26b150b9ac54ed06b712886023410b1ea4e521"
+source = "git+https://github.com/entropylost/luisa-compute-rs?branch=main#12b09d52ea689a8376aa0f4622fd8e989991256e"
 dependencies = [
  "proc-macro-error",
  "proc-macro2",
@@ -1557,12 +1542,6 @@ checksum = "77957b295656769bb8ad2b6a6b09d897d94f05c41b069aede1fcdaa675eaea04"
 dependencies = [
  "zerocopy 0.7.35",
 ]
-
-[[package]]
-name = "pretty-type-name"
-version = "1.0.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f0f73cdaf19b52e6143685c3606206e114a4dfa969d6b14ec3894c88eb38bd4b"
 
 [[package]]
 name = "prettyplease"
@@ -1887,45 +1866,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "sefirot"
-version = "0.1.0"
-dependencies = [
- "cuda_device_sys",
- "dashmap",
- "dyn-clone",
- "generational-arena",
- "id_newtype",
- "luisa_compute",
- "once_cell",
- "parking_lot",
- "petgraph",
- "pretty-type-name",
- "sefirot_macro",
- "smallvec",
- "static_assertions",
- "take_mut",
- "tracing",
-]
-
-[[package]]
-name = "sefirot_macro"
-version = "0.1.0"
-dependencies = [
- "proc-macro-error",
- "proc-macro2",
- "quote",
- "syn 2.0.87",
-]
-
-[[package]]
-name = "sefirot_testbed"
-version = "0.1.0"
-dependencies = [
- "sefirot",
- "winit",
-]
-
-[[package]]
 name = "serde"
 version = "1.0.214"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2099,12 +2039,6 @@ dependencies = [
  "toml 0.8.19",
  "version-compare",
 ]
-
-[[package]]
-name = "take_mut"
-version = "0.2.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f764005d11ee5f36500a149ace24e00e3da98b0158b3e2d53a7495660d3f4d60"
 
 [[package]]
 name = "target-lexicon"
@@ -2569,7 +2503,7 @@ version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf221c93e13a30d793f7645a0e7762c55d169dbb0a49671918a2319d289b10bb"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.48.0",
 ]
 
 [[package]]
