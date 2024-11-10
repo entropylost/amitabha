@@ -64,8 +64,8 @@ impl<F: MergeFluence, T: WorldTracer<F>> Tracer<F> for WorldMapper<F, T> {
         let next_grid = grid.next();
         let spacing = (self.world_size.y / grid.size.y.cast::<f32>())
             / (self.world_size.x / grid.size.x.cast::<f32>());
-        let lower_size = next_grid.angle_size(spacing, probe.dir * 2);
-        let upper_size = next_grid.angle_size(spacing, probe.dir * 2 + 1);
+        let lower_size = next_grid.angle_size(spacing * 2.0, probe.dir * 2);
+        let upper_size = next_grid.angle_size(spacing * 2.0, probe.dir * 2 + 1);
 
         if probe.cell.y % 2 == 0 {
             let end = probe.cell + Vec2::expr(offset * 2, 2);
@@ -122,43 +122,6 @@ fn intersect_circle(
     }
 }
 
-/*
-impl WorldTracer<BinaryF32> for AnalyticTracer<BinaryF32> {
-    type Params = ();
-    #[tracked]
-    fn trace(
-        &self,
-        _params: &Self::Params,
-        start: Expr<Vec2<f32>>,
-        end: Expr<Vec2<f32>>,
-    ) -> Expr<Fluence<BinaryF32>> {
-        let end_t = (end - start).length();
-        let dir = (end - start).normalize();
-
-        let best_t = end_t.var();
-        let best_color = f32::black().var();
-        for Circle {
-            center,
-            radius,
-            color,
-        } in self.circles.iter()
-        {
-            let (min_t, max_t, penetration, hit) =
-                intersect_circle(start - center, dir, radius.expr());
-            if hit && max_t > 0.0 && min_t < best_t {
-                *best_t = min_t;
-                *best_color = f32::scale(color.expr(), keter::min(penetration / 2.0, 1.0));
-            }
-        }
-        // if best_t < end_t {
-        Fluence::expr(1.0_f32.expr(), false.expr())
-        // } else {
-        //     Fluence::empty().expr()
-        // }
-    }
-}
- */
-
 impl<F: MergeFluence<Transmittance = bool>> WorldTracer<F> for AnalyticTracer<F> {
     type Params = ();
     #[tracked]
@@ -183,7 +146,7 @@ impl<F: MergeFluence<Transmittance = bool>> WorldTracer<F> for AnalyticTracer<F>
                 intersect_circle(start - center, dir, radius.expr());
             if hit && max_t > 0.0 && min_t < best_t {
                 *best_t = min_t;
-                *best_color = F::Radiance::scale(color.expr(), keter::min(penetration / 2.0, 1.0));
+                *best_color = F::Radiance::scale(color.expr(), keter::min(penetration / 4.0, 1.0));
             }
         }
         if best_t < end_t {

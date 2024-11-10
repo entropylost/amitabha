@@ -9,16 +9,18 @@ use keter::lang::types::vector::{Vec2, Vec3};
 use keter::prelude::*;
 use keter_testbed::App;
 
+const SIZE: u32 = 512;
+
 fn main() {
-    let grid_size = [2048, 2048];
+    let grid_size = [SIZE; 2];
     let app = App::new("Amitabha", grid_size)
-        .scale(1)
+        .scale(4)
         .dpi(2.0)
         .agx()
         .init();
 
-    let mut buffer_a = DEVICE.create_buffer::<f32>((grid_size[0] * grid_size[1]) as usize);
-    let mut buffer_b = DEVICE.create_buffer::<f32>((grid_size[0] * grid_size[1]) as usize);
+    let mut buffer_a = DEVICE.create_buffer::<f32>((SIZE * SIZE) as usize);
+    let mut buffer_b = DEVICE.create_buffer::<f32>((SIZE * SIZE) as usize);
 
     let rotations = [Vec2::x(), Vec2::y(), -Vec2::x(), -Vec2::y()];
 
@@ -58,12 +60,12 @@ fn main() {
 
     let draw = DEVICE.create_kernel::<fn(Vec2<f32>, Buffer<f32>)>(&track!(|rotation, buffer| {
         let cell = dispatch_id().xy();
-        let cell = cell.cast_f32() - Vec2::splat(1024.0);
+        let cell = cell.cast_f32() - Vec2::splat(SIZE as f32 / 2.0);
         let cell = Vec2::expr(
             cell.x * rotation.x - cell.y * rotation.y,
             cell.x * rotation.y + cell.y * rotation.x,
         );
-        let cell = cell + Vec2::splat(1024.0);
+        let cell = cell + Vec2::splat(SIZE as f32 / 2.0);
         let cell = cell + Vec2::y();
         let cell = cell.round().cast_u32();
         let radiance = BufferStorage.load(
@@ -77,19 +79,19 @@ fn main() {
         );
     }));
 
-    let num_cascades = 11;
+    let num_cascades = SIZE.trailing_zeros() as usize;
 
     app.run(|rt, _scope| {
         for r in 0..4 {
             for i in (0..num_cascades).rev() {
                 swap(&mut buffer_a, &mut buffer_b);
-                let grid = Grid::new(Vec2::new(grid_size[0], grid_size[1] >> i), 1 << i);
+                let grid = Grid::new(Vec2::new(SIZE, SIZE >> i), 1 << i);
                 kernels[r]
                     .dispatch(grid, &(), &buffer_a, &buffer_b)
                     .execute();
             }
             draw.dispatch(
-                [grid_size[0], grid_size[1], 1],
+                [SIZE, SIZE, 1],
                 &Vec2::new(rotations[r].x, -rotations[r].y),
                 &buffer_a,
             );
