@@ -32,6 +32,7 @@ pub trait WorldTracer<F: MergeFluence> {
 
 pub struct WorldMapper<F: MergeFluence, T> {
     pub tracer: T,
+    pub rotation: Vec2<f32>,
     pub world_origin: Vec2<f32>,
     pub world_size: Vec2<f32>,
     pub _marker: PhantomData<F>,
@@ -40,7 +41,12 @@ impl<F: MergeFluence, T> WorldMapper<F, T> {
     #[tracked]
     pub fn to_world(&self, grid: Expr<Grid>, cell: Expr<Vec2<u32>>) -> Expr<Vec2<f32>> {
         // oob handling lol
-        cell.cast_i32().cast_f32() / grid.size.cast_f32() * self.world_size + self.world_origin
+        let pos_norm = cell.cast_i32().cast_f32() / grid.size.cast_f32() - 0.5;
+        let pos_rotated = Vec2::expr(
+            pos_norm.x * self.rotation.x - pos_norm.y * self.rotation.y,
+            pos_norm.x * self.rotation.y + pos_norm.y * self.rotation.x,
+        );
+        pos_rotated * self.world_size + self.world_origin
     }
 }
 

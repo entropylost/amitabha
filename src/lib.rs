@@ -1,6 +1,7 @@
 #![allow(clippy::type_complexity)]
 
 // TODO: Can change u32 to use to u16?
+// TODO: Also move to i32 instead everywhere?
 
 use std::marker::PhantomData;
 
