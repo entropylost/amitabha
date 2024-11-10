@@ -87,7 +87,7 @@ fn main() {
                 swap(&mut buffer_a, &mut buffer_b);
                 let grid = Grid::new(Vec2::new(SIZE, SIZE >> i), 1 << i);
                 kernels[r]
-                    .dispatch(grid, &(), &buffer_a, &buffer_b)
+                    .dispatch(grid, &rt.cursor_position, &buffer_a, &buffer_b)
                     .execute();
             }
             draw.dispatch(

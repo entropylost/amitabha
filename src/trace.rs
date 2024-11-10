@@ -123,11 +123,11 @@ fn intersect_circle(
 }
 
 impl<F: MergeFluence<Transmittance = bool>> WorldTracer<F> for AnalyticTracer<F> {
-    type Params = ();
+    type Params = Expr<Vec2<f32>>;
     #[tracked]
     fn trace(
         &self,
-        _params: &Self::Params,
+        cursor_pos: &Self::Params,
         start: Expr<Vec2<f32>>,
         end: Expr<Vec2<f32>>,
     ) -> Expr<Fluence<F>> {
@@ -142,6 +142,11 @@ impl<F: MergeFluence<Transmittance = bool>> WorldTracer<F> for AnalyticTracer<F>
             color,
         } in self.circles.iter()
         {
+            let center = if *center == Vec2::splat(0.0) {
+                *cursor_pos
+            } else {
+                center.expr()
+            };
             let (min_t, max_t, penetration, hit) =
                 intersect_circle(start - center, dir, radius.expr());
             if hit && max_t > 0.0 && min_t < best_t {
