@@ -39,7 +39,8 @@ pub struct WorldMapper<F: MergeFluence, T> {
 impl<F: MergeFluence, T> WorldMapper<F, T> {
     #[tracked]
     pub fn to_world(&self, grid: Expr<Grid>, cell: Expr<Vec2<u32>>) -> Expr<Vec2<f32>> {
-        cell.cast::<f32>() / grid.size.cast::<f32>() * self.world_size + self.world_origin
+        // oob handling lol
+        cell.cast_i32().cast_f32() / grid.size.cast_f32() * self.world_size + self.world_origin
     }
 }
 

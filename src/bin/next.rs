@@ -23,13 +23,13 @@ fn main() {
     let tracer = WorldMapper {
         tracer: AnalyticTracer::<BinaryF32> {
             circles: vec![Circle {
-                center: Vec2::splat(0.5),
-                radius: 0.1,
+                center: Vec2::splat(1024.0),
+                radius: 16.0,
                 color: 100.0,
             }],
         },
         world_origin: Vec2::splat(0.0),
-        world_size: Vec2::splat(1.0),
+        world_size: Vec2::splat(2048.0),
         _marker: PhantomData::<BinaryF32>,
     };
 
@@ -52,13 +52,13 @@ fn main() {
             Probe::expr(cell, 0_u32.expr()),
         );
         app.display()
-            .write(dispatch_id().xy(), Vec3::splat_expr(radiance * 256.0));
+            .write(dispatch_id().xy(), Vec3::splat_expr(radiance));
     }));
 
     let num_cascades = 11;
 
     app.run(|rt, _scope| {
-        for i in (8..num_cascades).rev() {
+        for i in (0..num_cascades).rev() {
             swap(&mut buffer_a, &mut buffer_b);
             let grid = Grid::new(Vec2::new(grid_size[0], grid_size[1] >> i), 1 << i);
             kernel.dispatch(grid, &(), &buffer_a, &buffer_b).execute();
