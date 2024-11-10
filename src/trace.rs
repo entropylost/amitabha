@@ -146,7 +146,9 @@ impl<F: MergeFluence<Transmittance = bool>> WorldTracer<F> for AnalyticTracer<F>
                 intersect_circle(start - center, dir, radius.expr());
             if hit && max_t > 0.0 && min_t < best_t {
                 *best_t = min_t;
-                *best_color = F::Radiance::scale(color.expr(), keter::min(penetration / 4.0, 1.0));
+                // TODO: Make this adjustable / always stay at the x-axis size or something.
+                // Also make it part of the opacity instead.
+                *best_color = F::Radiance::scale(color.expr(), keter::min(penetration / 2.0, 1.0));
             }
         }
         if best_t < end_t {

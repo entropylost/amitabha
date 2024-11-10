@@ -29,20 +29,20 @@ fn main() {
             tracer: AnalyticTracer::<BinaryF32> {
                 circles: vec![
                     Circle {
-                        center: Vec2::new(0.0, 0.0),
-                        radius: 16.0,
+                        center: Vec2::new(256.0, 256.0),
+                        radius: 4.0,
                         color: 50.0,
                     },
                     Circle {
-                        center: Vec2::new(0.0, 400.0),
-                        radius: 16.0,
+                        center: Vec2::new(200.0, 150.0),
+                        radius: 4.0,
                         color: 0.0,
                     },
                 ],
             },
             rotation,
-            world_origin: Vec2::splat(0.0),
-            world_size: Vec2::splat(2048.0),
+            world_origin: Vec2::splat(256.0),
+            world_size: Vec2::splat(512.0),
             _marker: PhantomData::<BinaryF32>,
         };
 
