@@ -41,16 +41,20 @@ impl GridExpr {
         })
     }
     #[tracked]
-    pub fn offset(self, dir: Expr<u32>) -> Expr<u32> {
-        2 * dir - self.directions + 1
+    pub fn lower_offset(self, dir: Expr<u32>) -> Expr<u32> {
+        dir - self.directions / 2
     }
     #[tracked]
-    pub fn offset_f(self, dir: Expr<f32>) -> Expr<f32> {
-        2.0 * dir - self.directions.cast_f32() + 1.0
+    pub fn upper_offset(self, dir: Expr<u32>) -> Expr<u32> {
+        dir - self.directions / 2 + 1
+    }
+    #[tracked]
+    pub fn offset(self, dir: Expr<f32>) -> Expr<f32> {
+        dir - (self.directions / 2).cast_f32() + 0.5
     }
     #[tracked]
     pub fn ray_angle(self, spacing: Expr<f32>, dir: Expr<f32>) -> Expr<f32> {
-        self.offset_f(dir).atan2(spacing)
+        self.offset(dir).atan2(spacing)
     }
     #[tracked]
     pub fn angle_size(self, spacing: Expr<f32>, dir: Expr<u32>) -> Expr<f32> {
@@ -69,6 +73,12 @@ pub struct Probe {
 impl Probe {
     pub fn expr(cell: Expr<Vec2<u32>>, dir: Expr<u32>) -> Expr<Probe> {
         Probe::from_comps_expr(ProbeComps { cell, dir })
+    }
+}
+impl ProbeExpr {
+    #[tracked]
+    pub fn next(self) -> Expr<Probe> {
+        Probe::expr(Vec2::expr(self.cell.x, self.cell.y / 2), self.dir)
     }
 }
 
@@ -184,44 +194,54 @@ pub fn merge<F: MergeFluence, S: RadianceStorage<F::Radiance>, T: Tracer<F>>(
     (tracer, tracer_params): (&T, &T::Params),
 ) -> Expr<F::Radiance> {
     let next_grid = grid.next();
-    let load_next = |probe: Expr<Probe>| storage.load(next_radiance_params, next_grid, probe);
+    let load_next =
+        |probe: Expr<Probe>| storage.load(next_radiance_params, next_grid, probe.next());
 
-    let dir = probe.dir;
     let cell = probe.cell;
+    let dir = probe.dir;
+
     let lower_dir = dir * 2;
     let upper_dir = dir * 2 + 1;
-    let offset = grid.offset(dir);
-    let start = Vec2::expr(cell.x, cell.y / 2);
+    let lower_offset = grid.lower_offset(dir);
+    let upper_offset = grid.upper_offset(dir);
     if cell.y % 2 == 0 {
-        let end = start + Vec2::expr(offset * 2, 1);
-
         let [lower, upper] = tracer.trace(tracer_params, grid, probe);
 
         // Could possibly be better as ((a + b) + (c + d)) * 0.5 instead of (a + b).mul_add(0.5, (c + d) * 0.5)
         F::Radiance::merge(
             F::Radiance::blend(
-                load_next(Probe::expr(start, lower_dir)),
+                load_next(Probe::expr(cell, lower_dir)),
                 F::over_radiance(
                     lower,
-                    load_next(Probe::expr(end - 2 * Vec2::x(), lower_dir)),
+                    load_next(Probe::expr(
+                        cell + Vec2::expr(lower_offset, 1) * 2,
+                        lower_dir,
+                    )),
                 ),
             ),
             F::Radiance::blend(
-                load_next(Probe::expr(start, upper_dir)),
+                load_next(Probe::expr(cell, upper_dir)),
                 F::over_radiance(
                     upper,
-                    load_next(Probe::expr(end + 2 * Vec2::x(), upper_dir)),
+                    load_next(Probe::expr(
+                        cell + Vec2::expr(upper_offset, 1) * 2,
+                        upper_dir,
+                    )),
                 ),
             ),
         )
     } else {
-        let end = start + Vec2::expr(offset, 1);
-
         let [lower, upper] = tracer.trace(tracer_params, grid, probe);
 
         F::Radiance::merge(
-            F::over_radiance(lower, load_next(Probe::expr(end - Vec2::x(), lower_dir))),
-            F::over_radiance(upper, load_next(Probe::expr(end + Vec2::x(), upper_dir))),
+            F::over_radiance(
+                lower,
+                load_next(Probe::expr(cell + Vec2::expr(lower_offset, 1), lower_dir)),
+            ),
+            F::over_radiance(
+                upper,
+                load_next(Probe::expr(cell + Vec2::expr(upper_offset, 1), upper_dir)),
+            ),
         )
     }
 }

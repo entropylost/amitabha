@@ -59,32 +59,51 @@ impl<F: MergeFluence, T: WorldTracer<F>> Tracer<F> for WorldMapper<F, T> {
         grid: Expr<Grid>,
         probe: Expr<Probe>,
     ) -> [Expr<Fluence<F>>; 2] {
-        let start = self.to_world(grid, probe.cell);
-        let offset = grid.offset(probe.dir);
         let next_grid = grid.next();
-        let spacing = (self.world_size.y / grid.size.y.cast::<f32>())
-            / (self.world_size.x / grid.size.x.cast::<f32>());
-        let lower_size = next_grid.angle_size(spacing * 2.0, probe.dir * 2);
-        let upper_size = next_grid.angle_size(spacing * 2.0, probe.dir * 2 + 1);
 
-        if probe.cell.y % 2 == 0 {
-            let end = probe.cell + Vec2::expr(offset * 2, 2);
+        let cell = probe.cell;
+        let dir = probe.dir;
+
+        let start = self.to_world(grid, cell);
+        let spacing = (self.world_size.y / next_grid.size.y.cast::<f32>())
+            / (self.world_size.x / next_grid.size.x.cast::<f32>());
+        let lower_size = next_grid.angle_size(spacing, dir * 2);
+        let upper_size = next_grid.angle_size(spacing, dir * 2 + 1);
+        let lower_offset = grid.lower_offset(dir);
+        let upper_offset = grid.upper_offset(dir);
+
+        if cell.y % 2 == 0 {
             [
                 self.tracer
-                    .trace(params, start, self.to_world(grid, end - 2 * Vec2::x()))
+                    .trace(
+                        params,
+                        start,
+                        self.to_world(grid, cell + Vec2::expr(lower_offset * 2, 2)),
+                    )
                     .restrict_angle(lower_size),
                 self.tracer
-                    .trace(params, start, self.to_world(grid, end + 2 * Vec2::x()))
+                    .trace(
+                        params,
+                        start,
+                        self.to_world(grid, cell + Vec2::expr(upper_offset * 2, 2)),
+                    )
                     .restrict_angle(upper_size),
             ]
         } else {
-            let end = probe.cell + Vec2::expr(offset, 1);
             [
                 self.tracer
-                    .trace(params, start, self.to_world(grid, end - Vec2::x()))
+                    .trace(
+                        params,
+                        start,
+                        self.to_world(grid, cell + Vec2::expr(lower_offset, 1)),
+                    )
                     .restrict_angle(lower_size),
                 self.tracer
-                    .trace(params, start, self.to_world(grid, end + Vec2::x()))
+                    .trace(
+                        params,
+                        start,
+                        self.to_world(grid, cell + Vec2::expr(upper_offset, 1)),
+                    )
                     .restrict_angle(upper_size),
             ]
         }
