@@ -30,6 +30,101 @@ pub trait WorldTracer<F: MergeFluence> {
     ) -> Expr<Fluence<F>>;
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Value)]
+#[repr(C)]
+pub struct WorldSegment {
+    pub rotation: Vec2<f32>,
+    pub origin: Vec2<f32>,
+    pub size: Vec2<f32>,
+}
+
+pub struct SegmentedWorldMapper<F: MergeFluence, T> {
+    pub tracer: T,
+    pub segments: Buffer<WorldSegment>,
+    pub _marker: PhantomData<F>,
+}
+impl<F: MergeFluence, T> SegmentedWorldMapper<F, T> {
+    #[tracked]
+    pub fn to_world(
+        &self,
+        grid: Expr<Grid>,
+        cell: Expr<Vec2<u32>>,
+        segment: Expr<WorldSegment>,
+    ) -> Expr<Vec2<f32>> {
+        // oob handling lol
+        let pos_norm = cell.cast_i32().cast_f32()
+            / Vec2::expr(grid.size.x / self.segments.len() as u32, grid.size.y).cast_f32()
+            - 0.5;
+        let pos_rotated = Vec2::expr(
+            pos_norm.x * segment.rotation.x - pos_norm.y * segment.rotation.y,
+            pos_norm.x * segment.rotation.y + pos_norm.y * segment.rotation.x,
+        );
+        pos_rotated * segment.size + segment.origin
+    }
+}
+
+impl<F: MergeFluence, T: WorldTracer<F>> Tracer<F> for SegmentedWorldMapper<F, T> {
+    type Params = T::Params;
+    #[tracked]
+    fn trace(
+        &self,
+        params: &Self::Params,
+        grid: Expr<Grid>,
+        probe: Expr<Probe>,
+    ) -> [Expr<Fluence<F>>; 2] {
+        let next_grid = grid.next();
+
+        let cell = probe.cell;
+        let segment = cell.y / (grid.size.y / self.segments.len() as u32);
+        let segment = self.segments.read(segment);
+        let dir = probe.dir;
+
+        let start = self.to_world(grid, cell, segment);
+        let spacing = (segment.size.x / next_grid.size.x.cast::<f32>())
+            / (segment.size.y / next_grid.size.y.cast::<f32>());
+        let lower_size = next_grid.angle_size(spacing, dir * 2);
+        let upper_size = next_grid.angle_size(spacing, dir * 2 + 1);
+        let lower_offset = Vec2::expr(1, grid.lower_offset(dir));
+        let upper_offset = Vec2::expr(1, grid.upper_offset(dir));
+
+        if cell.x % 2 == 0 {
+            [
+                self.tracer
+                    .trace(
+                        params,
+                        start,
+                        self.to_world(grid, cell + lower_offset * 2, segment),
+                    )
+                    .restrict_angle(lower_size),
+                self.tracer
+                    .trace(
+                        params,
+                        start,
+                        self.to_world(grid, cell + upper_offset * 2, segment),
+                    )
+                    .restrict_angle(upper_size),
+            ]
+        } else {
+            [
+                self.tracer
+                    .trace(
+                        params,
+                        start,
+                        self.to_world(grid, cell + lower_offset, segment),
+                    )
+                    .restrict_angle(lower_size),
+                self.tracer
+                    .trace(
+                        params,
+                        start,
+                        self.to_world(grid, cell + upper_offset, segment),
+                    )
+                    .restrict_angle(upper_size),
+            ]
+        }
+    }
+}
+
 pub struct WorldMapper<F: MergeFluence, T> {
     pub tracer: T,
     pub rotation: Vec2<f32>,
@@ -65,45 +160,29 @@ impl<F: MergeFluence, T: WorldTracer<F>> Tracer<F> for WorldMapper<F, T> {
         let dir = probe.dir;
 
         let start = self.to_world(grid, cell);
-        let spacing = (self.world_size.y / next_grid.size.y.cast::<f32>())
-            / (self.world_size.x / next_grid.size.x.cast::<f32>());
+        let spacing = (self.world_size.x / next_grid.size.x.cast::<f32>())
+            / (self.world_size.y / next_grid.size.y.cast::<f32>());
         let lower_size = next_grid.angle_size(spacing, dir * 2);
         let upper_size = next_grid.angle_size(spacing, dir * 2 + 1);
-        let lower_offset = grid.lower_offset(dir);
-        let upper_offset = grid.upper_offset(dir);
+        let lower_offset = Vec2::expr(1, grid.lower_offset(dir));
+        let upper_offset = Vec2::expr(1, grid.upper_offset(dir));
 
-        if cell.y % 2 == 0 {
+        if cell.x % 2 == 0 {
             [
                 self.tracer
-                    .trace(
-                        params,
-                        start,
-                        self.to_world(grid, cell + Vec2::expr(lower_offset * 2, 2)),
-                    )
+                    .trace(params, start, self.to_world(grid, cell + lower_offset * 2))
                     .restrict_angle(lower_size),
                 self.tracer
-                    .trace(
-                        params,
-                        start,
-                        self.to_world(grid, cell + Vec2::expr(upper_offset * 2, 2)),
-                    )
+                    .trace(params, start, self.to_world(grid, cell + upper_offset * 2))
                     .restrict_angle(upper_size),
             ]
         } else {
             [
                 self.tracer
-                    .trace(
-                        params,
-                        start,
-                        self.to_world(grid, cell + Vec2::expr(lower_offset, 1)),
-                    )
+                    .trace(params, start, self.to_world(grid, cell + lower_offset))
                     .restrict_angle(lower_size),
                 self.tracer
-                    .trace(
-                        params,
-                        start,
-                        self.to_world(grid, cell + Vec2::expr(upper_offset, 1)),
-                    )
+                    .trace(params, start, self.to_world(grid, cell + upper_offset))
                     .restrict_angle(upper_size),
             ]
         }
@@ -115,10 +194,6 @@ pub struct Circle<R> {
     pub center: Vec2<f32>,
     pub radius: f32,
     pub color: R,
-}
-
-pub struct AnalyticTracer<F: MergeFluence> {
-    pub circles: Vec<Circle<F::Radiance>>,
 }
 
 #[tracked]
@@ -141,7 +216,52 @@ fn intersect_circle(
     }
 }
 
+pub struct AnalyticTracer<F: MergeFluence> {
+    pub circles: Vec<Circle<F::Radiance>>,
+}
+
 impl<F: MergeFluence<Transmittance = bool>> WorldTracer<F> for AnalyticTracer<F> {
+    type Params = ();
+    #[tracked]
+    fn trace(
+        &self,
+        _params: &Self::Params,
+        start: Expr<Vec2<f32>>,
+        end: Expr<Vec2<f32>>,
+    ) -> Expr<Fluence<F>> {
+        let end_t = (end - start).length();
+        let dir = (end - start).normalize();
+
+        let best_t = end_t.var();
+        let best_color = F::Radiance::black().var();
+        for Circle {
+            center,
+            radius,
+            color,
+        } in self.circles.iter()
+        {
+            let (min_t, max_t, penetration, hit) =
+                intersect_circle(start - center, dir, radius.expr());
+            if hit && max_t > 0.0 && min_t < best_t {
+                *best_t = min_t;
+                // TODO: Make this adjustable / always stay at the x-axis size or something.
+                // Also make it part of the opacity instead.
+                *best_color = F::Radiance::scale(color.expr(), keter::min(penetration / 2.0, 1.0));
+            }
+        }
+        if best_t < end_t {
+            Fluence::solid_expr(**best_color)
+        } else {
+            Fluence::empty().expr()
+        }
+    }
+}
+
+pub struct AnalyticCursorTracer<F: MergeFluence> {
+    pub circles: Vec<Circle<F::Radiance>>,
+}
+
+impl<F: MergeFluence<Transmittance = bool>> WorldTracer<F> for AnalyticCursorTracer<F> {
     type Params = Expr<Vec2<f32>>;
     #[tracked]
     fn trace(

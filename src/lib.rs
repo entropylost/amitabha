@@ -36,7 +36,7 @@ impl GridExpr {
     #[tracked]
     pub fn next(self) -> Expr<Grid> {
         Grid::from_comps_expr(GridComps {
-            size: Vec2::expr(self.size.x, self.size.y / 2),
+            size: Vec2::expr(self.size.x / 2, self.size.y),
             directions: self.directions * 2,
         })
     }
@@ -78,7 +78,7 @@ impl Probe {
 impl ProbeExpr {
     #[tracked]
     pub fn next(self) -> Expr<Probe> {
-        Probe::expr(Vec2::expr(self.cell.x, self.cell.y / 2), self.dir)
+        Probe::expr(Vec2::expr(self.cell.x / 2, self.cell.y), self.dir)
     }
 }
 
@@ -202,9 +202,9 @@ pub fn merge<F: MergeFluence, S: RadianceStorage<F::Radiance>, T: Tracer<F>>(
 
     let lower_dir = dir * 2;
     let upper_dir = dir * 2 + 1;
-    let lower_offset = grid.lower_offset(dir);
-    let upper_offset = grid.upper_offset(dir);
-    if cell.y % 2 == 0 {
+    let lower_offset = Vec2::expr(1, grid.lower_offset(dir));
+    let upper_offset = Vec2::expr(1, grid.upper_offset(dir));
+    if cell.x % 2 == 0 {
         let [lower, upper] = tracer.trace(tracer_params, grid, probe);
 
         // Could possibly be better as ((a + b) + (c + d)) * 0.5 instead of (a + b).mul_add(0.5, (c + d) * 0.5)
@@ -213,20 +213,14 @@ pub fn merge<F: MergeFluence, S: RadianceStorage<F::Radiance>, T: Tracer<F>>(
                 load_next(Probe::expr(cell, lower_dir)),
                 F::over_radiance(
                     lower,
-                    load_next(Probe::expr(
-                        cell + Vec2::expr(lower_offset, 1) * 2,
-                        lower_dir,
-                    )),
+                    load_next(Probe::expr(cell + lower_offset * 2, lower_dir)),
                 ),
             ),
             F::Radiance::blend(
                 load_next(Probe::expr(cell, upper_dir)),
                 F::over_radiance(
                     upper,
-                    load_next(Probe::expr(
-                        cell + Vec2::expr(upper_offset, 1) * 2,
-                        upper_dir,
-                    )),
+                    load_next(Probe::expr(cell + upper_offset * 2, upper_dir)),
                 ),
             ),
         )
@@ -236,11 +230,11 @@ pub fn merge<F: MergeFluence, S: RadianceStorage<F::Radiance>, T: Tracer<F>>(
         F::Radiance::merge(
             F::over_radiance(
                 lower,
-                load_next(Probe::expr(cell + Vec2::expr(lower_offset, 1), lower_dir)),
+                load_next(Probe::expr(cell + lower_offset, lower_dir)),
             ),
             F::over_radiance(
                 upper,
-                load_next(Probe::expr(cell + Vec2::expr(upper_offset, 1), upper_dir)),
+                load_next(Probe::expr(cell + upper_offset, upper_dir)),
             ),
         )
     }
