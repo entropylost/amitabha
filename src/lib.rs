@@ -11,7 +11,7 @@ use keter::prelude::*;
 use keter::runtime::{AsKernelArg, KernelParameter};
 
 pub mod color;
-use color::{MergeFluence, Radiance};
+use color::{Fluence, MergeFluence, Radiance};
 pub mod trace;
 use trace::Tracer;
 pub mod storage;
@@ -185,7 +185,56 @@ impl<F: MergeFluence, T: Tracer<F>, S: RadianceStorage<F::Radiance>> MergeKernel
     }
 }
 
-// TODO: Switch to using half directions.
+// TODO: Add tracer? Make separate Tracer1 type?
+// Merges into (cell.x, cell.y + 0.5)
+#[tracked]
+pub fn merge_1<F: MergeFluence, S: RadianceStorage<F::Radiance>>(
+    grid: Expr<Grid>,
+    cell: Expr<Vec2<u32>>,
+    (storage, next_radiance_params): (&S, &S::Params),
+) -> Expr<F::Radiance> {
+    let next_grid = grid.next();
+    let load_next =
+        |probe: Expr<Probe>| storage.load(next_radiance_params, next_grid, probe.next());
+
+    let lower_dir = 0_u32.expr();
+    let upper_dir = 1_u32.expr();
+    let lower_offset = Vec2::expr(1, 0);
+    let upper_offset = Vec2::expr(1, 1);
+
+    if cell.x % 2 == 0 {
+        let [lower, upper] = [Fluence::<F>::empty().expr(); 2];
+        F::Radiance::merge(
+            F::Radiance::blend(
+                load_next(Probe::expr(cell, lower_dir)),
+                F::over_radiance(
+                    lower,
+                    load_next(Probe::expr(cell + lower_offset * 2, lower_dir)),
+                ),
+            ),
+            F::Radiance::blend(
+                load_next(Probe::expr(cell, upper_dir)),
+                F::over_radiance(
+                    upper,
+                    load_next(Probe::expr(cell + upper_offset * 2, upper_dir)),
+                ),
+            ),
+        )
+    } else {
+        let [lower, upper] = [Fluence::<F>::empty().expr(); 2];
+        F::Radiance::merge(
+            F::over_radiance(
+                lower,
+                load_next(Probe::expr(cell + lower_offset, lower_dir)),
+            ),
+            F::over_radiance(
+                upper,
+                load_next(Probe::expr(cell + upper_offset, upper_dir)),
+            ),
+        )
+    }
+}
+
 #[tracked]
 pub fn merge<F: MergeFluence, S: RadianceStorage<F::Radiance>, T: Tracer<F>>(
     grid: Expr<Grid>,
@@ -204,6 +253,7 @@ pub fn merge<F: MergeFluence, S: RadianceStorage<F::Radiance>, T: Tracer<F>>(
     let upper_dir = dir * 2 + 1;
     let lower_offset = Vec2::expr(1, grid.lower_offset(dir));
     let upper_offset = Vec2::expr(1, grid.upper_offset(dir));
+
     if cell.x % 2 == 0 {
         let [lower, upper] = tracer.trace(tracer_params, grid, probe);
 

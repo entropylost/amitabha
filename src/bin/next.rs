@@ -104,7 +104,7 @@ fn main() {
 
         app.display().write(
             dispatch_id().xy(),
-            app.display().read(dispatch_id().xy()) + Vec3::splat_expr(radiance),
+            app.display().read(dispatch_id().xy()) + Vec3::splat_expr(radiance / 4.0),
         );
     }));
 

@@ -42,6 +42,17 @@ impl<F: MergeFluence> FluenceExpr<F> {
             self.transmittance,
         )
     }
+    #[tracked]
+    pub fn opaque_if(self, x: Expr<bool>) -> Expr<Fluence<F>> {
+        Fluence::expr(
+            self.radiance,
+            if x {
+                F::Transmittance::opaque().expr()
+            } else {
+                self.transmittance
+            },
+        )
+    }
 }
 
 pub trait MergeFluence: 'static + Copy {

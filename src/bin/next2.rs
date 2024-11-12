@@ -6,7 +6,7 @@ use amitabha::storage::{BufferStorage, RadianceStorage};
 use amitabha::trace::{
     AnalyticCursorTracer, Circle, SegmentedWorldMapper, WorldMapper, WorldSegment,
 };
-use amitabha::{DispatchAxis, Grid, MergeKernelSettings, Probe};
+use amitabha::{merge_1, DispatchAxis, Grid, MergeKernelSettings, Probe};
 use keter::lang::types::vector::{Vec2, Vec3};
 use keter::prelude::*;
 use keter_testbed::{App, MouseButton};
@@ -46,11 +46,12 @@ fn main() {
     let mut segments = vec![];
 
     for r in rotations {
-        for x_offset in [0, 1] {
+        for y_offset in [0, 1] {
             segments.push(WorldSegment {
                 rotation: r,
-                origin: Vec2::new(256.0, 256.0) + r * x_offset as f32,
+                origin: Vec2::new(256.0, 256.0) + Vec2::new(-r.y, r.x) * y_offset as f32,
                 size: Vec2::new(512.0, 512.0),
+                offset: SIZE * segments.len() as u32,
             });
         }
     }
@@ -72,54 +73,46 @@ fn main() {
 
     let kernel = settings.build_kernel();
 
-    // Coordinates of these points in the world are at (2x + 1, 2y - 2).
-    let final_buffer = DEVICE.create_buffer::<f32>((4 * SIZE * SIZE) as usize);
+    let draw = DEVICE.create_kernel::<fn(Vec2<f32>, u32, Buffer<f32>)>(&track!(
+        |rotation, rotation_index, next_radiance| {
+            let cell = dispatch_id().xy();
+            let cell = cell.cast_f32() - Vec2::splat(DISPLAY_SIZE as f32 / 2.0);
+            let cell = Vec2::expr(
+                cell.x * rotation.x - cell.y * rotation.y,
+                cell.x * rotation.y + cell.y * rotation.x,
+            );
+            let cell = cell + Vec2::splat(DISPLAY_SIZE as f32 / 2.0);
 
-    let finish = DEVICE.create_kernel::<fn(Buffer<f32>)>(&track!(|buffer| {
-        let cell = dispatch_id().xy();
-        let radiance_lower = BufferStorage.load(
-            &buffer,
-            Grid::new(Vec2::new(SIZE, SIZE), 2).expr(),
-            Probe::expr(cell, 0_u32.expr()),
-        );
-        let radiance_upper = BufferStorage.load(
-            &buffer,
-            Grid::new(Vec2::new(SIZE, SIZE), 2).expr(),
-            Probe::expr(cell + Vec2::x(), 1_u32.expr()),
-        );
-        let radiance = radiance_lower + radiance_upper;
-        final_buffer.write(cell.x + cell.y * SIZE, radiance);
-    }));
+            let cell = cell.round().cast_u32();
 
-    let draw = DEVICE.create_kernel::<fn(Vec2<f32>)>(&track!(|rotation| {
-        let cell = dispatch_id().xy();
-        let cell = cell.cast_f32() - Vec2::splat(DISPLAY_SIZE as f32 / 2.0);
-        let cell = Vec2::expr(
-            cell.x * rotation.x - cell.y * rotation.y,
-            cell.x * rotation.y + cell.y * rotation.x,
-        );
-        let cell = cell + Vec2::splat(DISPLAY_SIZE as f32 / 2.0);
-        let cell = cell.round();
-        let cell = cell - Vec2::new(1.0, -2.0);
-        let cell = cell / 2.0;
+            let grid = Grid::new(Vec2::new(DISPLAY_SIZE, SEGMENTS * SIZE), 1).expr();
 
-        let radiance = 0.0_f32.var();
-        for c in [
-            Vec2::expr(cell.x.floor(), cell.y.floor()),
-            Vec2::expr(cell.x.ceil(), cell.y.floor()),
-            Vec2::expr(cell.x.floor(), cell.y.ceil()),
-            Vec2::expr(cell.x.ceil(), cell.y.ceil()),
-        ] {
-            if (c >= 0.0).all() && (c < SIZE as f32).all() {
-                *radiance += final_buffer.read(c.x.cast_u32() + c.y.cast_u32() * SIZE);
-            }
+            let radiance = if cell.y % 2 == 0 {
+                // Need to collect from odd cells.
+                merge_1::<BinaryF32, _>(
+                    grid,
+                    Vec2::expr(
+                        cell.x + 1,
+                        cell.y / 2 - 1 + SIZE + 2 * SIZE * rotation_index,
+                    ),
+                    (&BufferStorage, &next_radiance),
+                )
+            } else {
+                merge_1::<BinaryF32, _>(
+                    grid,
+                    Vec2::expr(cell.x + 1, cell.y / 2 + 2 * SIZE * rotation_index),
+                    (&BufferStorage, &next_radiance),
+                )
+            };
+            let a = radiance >= 0.0;
+            lc_assert!(a);
+
+            app.display().write(
+                dispatch_id().xy(),
+                app.display().read(dispatch_id().xy()) + Vec3::splat_expr(radiance),
+            );
         }
-
-        app.display().write(
-            dispatch_id().xy(),
-            app.display().read(dispatch_id().xy()) + Vec3::splat_expr(radiance),
-        );
-    }));
+    ));
 
     let num_cascades = SIZE.trailing_zeros() as usize;
 
@@ -131,10 +124,18 @@ fn main() {
         }
         for i in (0..num_cascades).rev() {
             swap(&mut buffer_a, &mut buffer_b);
-            let grid = Grid::new(Vec2::new(SEGMENTS * SIZE, SIZE >> i), 2 << i);
+            let grid = Grid::new(Vec2::new(SIZE >> i, SEGMENTS * SIZE), 2 << i);
             kernel
                 .dispatch(grid, &light_pos, &buffer_a, &buffer_b)
                 .execute();
+        }
+        for (i, r) in rotations.iter().enumerate() {
+            draw.dispatch(
+                [DISPLAY_SIZE, DISPLAY_SIZE, 1],
+                &Vec2::new(r.x, -r.y),
+                &(i as u32),
+                &buffer_a,
+            );
         }
 
         rt.log_fps();
