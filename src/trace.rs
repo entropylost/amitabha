@@ -332,3 +332,45 @@ impl<F: MergeFluence<Transmittance = bool>> WorldTracer<F> for AnalyticCursorTra
         }
     }
 }
+
+pub struct StorageTracer;
+
+impl<F: MergeFluence> Tracer<F> for StorageTracer {
+    type Params = (BufferVar<Fluence<F>>, BufferVar<Fluence<F>>);
+    #[tracked]
+    fn trace(
+        &self,
+        (buffer, next_buffer): &Self::Params,
+        grid: Expr<Grid>,
+        probe: Expr<Probe>,
+    ) -> [Expr<Fluence<F>>; 2] {
+        let next_grid = grid.next();
+        if probe.cell.x % 2 == 0 {
+            [
+                next_buffer.read(
+                    probe.cell.x / 2
+                        + next_grid.size.x * probe.cell.y
+                        + next_grid.size.x * next_grid.size.y * probe.dir * 2,
+                ),
+                next_buffer.read(
+                    probe.cell.x / 2
+                        + next_grid.size.x * probe.cell.y
+                        + next_grid.size.x * next_grid.size.y * (probe.dir + 1) * 2,
+                ),
+            ]
+        } else {
+            [
+                buffer.read(
+                    probe.cell.x
+                        + grid.size.x * probe.cell.y
+                        + grid.size.x * grid.size.y * probe.dir,
+                ),
+                buffer.read(
+                    probe.cell.x
+                        + grid.size.x * probe.cell.y
+                        + grid.size.x * grid.size.y * (probe.dir + 1),
+                ),
+            ]
+        }
+    }
+}

@@ -2,11 +2,9 @@ use std::marker::PhantomData;
 use std::mem::swap;
 
 use amitabha::color::BinaryF32;
-use amitabha::storage::{BufferStorage, RadianceStorage};
-use amitabha::trace::{
-    AnalyticCursorTracer, Circle, SegmentedWorldMapper, WorldMapper, WorldSegment,
-};
-use amitabha::{merge_1, DispatchAxis, Grid, MergeKernelSettings, Probe};
+use amitabha::storage::BufferStorage;
+use amitabha::trace::{AnalyticCursorTracer, Circle, SegmentedWorldMapper, WorldSegment};
+use amitabha::{merge_1_even, merge_1_odd, DispatchAxis, Grid, MergeKernelSettings};
 use keter::lang::types::vector::{Vec2, Vec3};
 use keter::prelude::*;
 use keter_testbed::{App, MouseButton};
@@ -83,29 +81,44 @@ fn main() {
             );
             let cell = cell + Vec2::splat(DISPLAY_SIZE as f32 / 2.0);
 
+            let cell = cell + Vec2::x();
             let cell = cell.round().cast_u32();
 
             let grid = Grid::new(Vec2::new(DISPLAY_SIZE, SEGMENTS * SIZE), 1).expr();
 
-            let radiance = if cell.y % 2 == 0 {
-                // Need to collect from odd cells.
-                merge_1::<BinaryF32, _>(
-                    grid,
-                    Vec2::expr(
-                        cell.x + 1,
-                        cell.y / 2 - 1 + SIZE + 2 * SIZE * rotation_index,
-                    ),
-                    (&BufferStorage, &next_radiance),
-                )
+            let radiance = if cell.x % 2 == 0 {
+                if cell.y % 2 == 0 {
+                    merge_1_even::<BinaryF32, _>(
+                        grid,
+                        Vec2::expr(cell.x + 1, cell.y / 2 + 2 * SIZE * rotation_index),
+                        (&BufferStorage, &next_radiance),
+                    )
+                } else {
+                    merge_1_even::<BinaryF32, _>(
+                        grid,
+                        Vec2::expr(cell.x + 1, cell.y / 2 + SIZE + 2 * SIZE * rotation_index),
+                        (&BufferStorage, &next_radiance),
+                    )
+                }
             } else {
-                merge_1::<BinaryF32, _>(
-                    grid,
-                    Vec2::expr(cell.x + 1, cell.y / 2 + 2 * SIZE * rotation_index),
-                    (&BufferStorage, &next_radiance),
-                )
+                if cell.y % 2 == 0 {
+                    // Need to collect from odd cells.
+                    merge_1_odd::<BinaryF32, _>(
+                        grid,
+                        Vec2::expr(
+                            cell.x + 1,
+                            cell.y / 2 - 1 + SIZE + 2 * SIZE * rotation_index,
+                        ),
+                        (&BufferStorage, &next_radiance),
+                    )
+                } else {
+                    merge_1_odd::<BinaryF32, _>(
+                        grid,
+                        Vec2::expr(cell.x + 1, cell.y / 2 + 2 * SIZE * rotation_index),
+                        (&BufferStorage, &next_radiance),
+                    )
+                }
             };
-            let a = radiance >= 0.0;
-            lc_assert!(a);
 
             app.display().write(
                 dispatch_id().xy(),
