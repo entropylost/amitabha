@@ -2,9 +2,9 @@ use std::marker::PhantomData;
 
 use keter::lang::types::vector::Vec2;
 use keter::prelude::*;
-use keter::runtime::KernelParameter;
+use keter::runtime::{AsKernelArg, KernelParameter};
 
-use crate::color::{Fluence, MergeFluence, Radiance};
+use crate::color::{Fluence, MergeFluence, PartialTransmittance, Radiance};
 use crate::{Grid, Probe};
 
 pub trait Tracer<F: MergeFluence> {
@@ -86,6 +86,34 @@ impl<F: MergeFluence, T> SegmentedWorldMapper<F, T> {
     ) -> Expr<bool> {
         let cell = cell - Vec2::y() * segment.offset;
         cell.y < grid.size.y / self.segments.len() as u32
+    }
+}
+impl<F: MergeFluence, T: WorldTracer<F>> SegmentedWorldMapper<F, T> {
+    pub fn cache_level(
+        &self,
+        grid: Grid,
+        buffer: &Buffer<Fluence<F>>,
+        args: &impl AsKernelArg<Output = <T::Params as KernelParameter>::Arg>,
+    ) {
+        assert!(buffer.len() as u32 >= grid.size.x * grid.size.y * (grid.directions + 1));
+        let kernel = DEVICE.create_kernel::<fn(<T::Params as KernelParameter>::Arg)>(&track!(
+            |tracer_params| {
+                let grid = grid.expr();
+                let cell = dispatch_id().xy();
+                let segment = cell.y / (grid.size.y / self.segments.len() as u32);
+                let segment = self.segments.read(segment);
+                let dir = dispatch_id().z;
+                let start = self.to_world(grid, cell, segment);
+                let end_cell = cell + Vec2::expr(1, grid.lower_offset(dir));
+                let end = self.to_world(grid, end_cell, segment);
+                let fluence = self
+                    .tracer
+                    .trace(&tracer_params, start, end)
+                    .opaque_if(!self.contains(grid, end_cell, segment));
+                StorageTracer::store(&buffer.var(), grid, Probe::expr(cell, dir), fluence);
+            }
+        ));
+        kernel.dispatch([grid.size.x, grid.size.y, grid.directions + 1], args);
     }
 }
 
@@ -250,7 +278,7 @@ pub struct AnalyticTracer<F: MergeFluence> {
     pub circles: Vec<Circle<F::Radiance>>,
 }
 
-impl<F: MergeFluence<Transmittance = bool>> WorldTracer<F> for AnalyticTracer<F> {
+impl<F: MergeFluence> WorldTracer<F> for AnalyticTracer<F> {
     type Params = ();
     #[tracked]
     fn trace(
@@ -291,7 +319,7 @@ pub struct AnalyticCursorTracer<F: MergeFluence> {
     pub circles: Vec<Circle<F::Radiance>>,
 }
 
-impl<F: MergeFluence<Transmittance = bool>> WorldTracer<F> for AnalyticCursorTracer<F> {
+impl<F: MergeFluence> WorldTracer<F> for AnalyticCursorTracer<F> {
     type Params = Expr<Vec2<f32>>;
     #[tracked]
     fn trace(
@@ -334,43 +362,111 @@ impl<F: MergeFluence<Transmittance = bool>> WorldTracer<F> for AnalyticCursorTra
 }
 
 pub struct StorageTracer;
+impl StorageTracer {
+    #[tracked]
+    pub fn load<F: MergeFluence>(
+        buffer: &BufferVar<Fluence<F>>,
+        grid: Expr<Grid>,
+        probe: Expr<Probe>,
+    ) -> Expr<Fluence<F>> {
+        buffer
+            .read(probe.cell.x + grid.size.x * probe.cell.y + grid.size.x * grid.size.y * probe.dir)
+    }
+    #[tracked]
+    pub fn store<F: MergeFluence>(
+        buffer: &BufferVar<Fluence<F>>,
+        grid: Expr<Grid>,
+        probe: Expr<Probe>,
+        fluence: Expr<Fluence<F>>,
+    ) {
+        buffer.write(
+            probe.cell.x + grid.size.x * probe.cell.y + grid.size.x * grid.size.y * probe.dir,
+            fluence,
+        );
+    }
+}
 
 impl<F: MergeFluence> Tracer<F> for StorageTracer {
-    type Params = (BufferVar<Fluence<F>>, BufferVar<Fluence<F>>);
+    type Params = (BufferVar<Fluence<F>>, BufferVar<Fluence<F>>, Expr<f32>);
     #[tracked]
     fn trace(
         &self,
-        (buffer, next_buffer): &Self::Params,
+        (buffer, next_buffer, spacing): &Self::Params,
         grid: Expr<Grid>,
         probe: Expr<Probe>,
     ) -> [Expr<Fluence<F>>; 2] {
         let next_grid = grid.next();
+        let lower_size = next_grid.angle_size(*spacing, probe.dir * 2);
+        let upper_size = next_grid.angle_size(*spacing, probe.dir * 2 + 1);
         if probe.cell.x % 2 == 0 {
             [
-                next_buffer.read(
-                    probe.cell.x / 2
-                        + next_grid.size.x * probe.cell.y
-                        + next_grid.size.x * next_grid.size.y * probe.dir * 2,
-                ),
-                next_buffer.read(
-                    probe.cell.x / 2
-                        + next_grid.size.x * probe.cell.y
-                        + next_grid.size.x * next_grid.size.y * (probe.dir + 1) * 2,
-                ),
+                StorageTracer::load(next_buffer, next_grid, probe.next().with_dir(probe.dir * 2))
+                    .restrict_angle(lower_size),
+                StorageTracer::load(
+                    next_buffer,
+                    next_grid,
+                    probe.next().with_dir((probe.dir + 1) * 2),
+                )
+                .restrict_angle(upper_size),
             ]
         } else {
+            let a = buffer.len_expr_u32() >= (grid.size.x * grid.size.y * (grid.directions + 1));
+            lc_assert!(a);
             [
-                buffer.read(
-                    probe.cell.x
-                        + grid.size.x * probe.cell.y
-                        + grid.size.x * grid.size.y * probe.dir,
-                ),
-                buffer.read(
-                    probe.cell.x
-                        + grid.size.x * probe.cell.y
-                        + grid.size.x * grid.size.y * (probe.dir + 1),
-                ),
+                StorageTracer::load(buffer, grid, probe).restrict_angle(lower_size),
+                StorageTracer::load(buffer, grid, probe.with_dir(probe.dir + 1))
+                    .restrict_angle(upper_size),
             ]
         }
+    }
+}
+
+#[tracked]
+pub fn merge_up<F: MergeFluence>(
+    grid: Expr<Grid>,
+    probe: Expr<Probe>,
+    last_buffer: &BufferVar<Fluence<F>>,
+) -> Expr<Fluence<F>>
+where
+    F::Transmittance: PartialTransmittance,
+{
+    let cell = probe.cell;
+    let dir = probe.dir;
+
+    let last_grid = grid.last();
+    let last_cell = Vec2::expr(cell.x * 2, cell.y);
+    let offset = grid.lower_offset(dir);
+    if dir % 2 == 0 {
+        let last_dir = dir / 2;
+        let midpoint = Probe::expr(last_cell + Vec2::expr(1, offset / 2), last_dir);
+
+        F::over(
+            StorageTracer::load(last_buffer, last_grid, Probe::expr(last_cell, last_dir)),
+            StorageTracer::load(last_buffer, last_grid, midpoint),
+        )
+    } else {
+        let last_dir_lower = dir / 2;
+        let last_dir_upper = dir / 2 + 1;
+        let midpoint_lower = Probe::expr(last_cell + Vec2::expr(1, offset / 2), last_dir_upper);
+        let midpoint_upper = Probe::expr(last_cell + Vec2::expr(1, offset / 2 + 1), last_dir_lower);
+
+        Fluence::blend(
+            F::over(
+                StorageTracer::load(
+                    last_buffer,
+                    last_grid,
+                    Probe::expr(last_cell, last_dir_lower),
+                ),
+                StorageTracer::load(last_buffer, last_grid, midpoint_lower),
+            ),
+            F::over(
+                StorageTracer::load(
+                    last_buffer,
+                    last_grid,
+                    Probe::expr(last_cell, last_dir_upper),
+                ),
+                StorageTracer::load(last_buffer, last_grid, midpoint_upper),
+            ),
+        )
     }
 }

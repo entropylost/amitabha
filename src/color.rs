@@ -54,6 +54,18 @@ impl<F: MergeFluence> FluenceExpr<F> {
         )
     }
 }
+impl<F: MergeFluence> Fluence<F>
+where
+    F::Transmittance: PartialTransmittance,
+{
+    #[tracked]
+    pub fn blend(a: Expr<Self>, b: Expr<Self>) -> Expr<Self> {
+        Fluence::expr(
+            F::Radiance::blend(a.radiance, b.radiance),
+            F::Transmittance::blend(a.transmittance, b.transmittance),
+        )
+    }
+}
 
 pub trait MergeFluence: 'static + Copy {
     type Radiance: Radiance;
@@ -122,6 +134,10 @@ impl Radiance for Vec3<f32> {
     }
 }
 
+pub trait PartialTransmittance: Transmittance {
+    fn blend(a: Expr<Self>, b: Expr<Self>) -> Expr<Self>;
+}
+
 pub trait Transmittance: Value {
     fn transparent() -> Self;
     fn opaque() -> Self;
@@ -134,6 +150,38 @@ impl Transmittance for bool {
         false
     }
 }
+impl Transmittance for f32 {
+    fn transparent() -> Self {
+        1.0
+    }
+    fn opaque() -> Self {
+        0.0
+    }
+}
+impl PartialTransmittance for f32 {
+    #[tracked]
+    fn blend(a: Expr<Self>, b: Expr<Self>) -> Expr<Self> {
+        (a + b) * 0.5
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct SingleF32;
+impl MergeFluence for SingleF32 {
+    type Radiance = f32;
+    type Transmittance = f32;
+    #[tracked]
+    fn over(near: Expr<Fluence<Self>>, far: Expr<Fluence<Self>>) -> Expr<Fluence<Self>> {
+        Fluence::expr(
+            near.transmittance * far.radiance + near.radiance,
+            near.transmittance * far.transmittance,
+        )
+    }
+    #[tracked]
+    fn over_radiance(near: Expr<Fluence<Self>>, far: Expr<Self::Radiance>) -> Expr<Self::Radiance> {
+        near.transmittance * far + near.radiance
+    }
+}
 
 #[derive(Debug, Clone, Copy)]
 pub struct BinaryF32;
@@ -143,7 +191,7 @@ impl MergeFluence for BinaryF32 {
     #[tracked]
     fn over(near: Expr<Fluence<Self>>, far: Expr<Fluence<Self>>) -> Expr<Fluence<Self>> {
         Fluence::expr(
-            near.transmittance.select(far.radiance, near.radiance),
+            near.transmittance.select(far.radiance, f32::black().expr()) + near.radiance,
             near.transmittance && far.transmittance,
         )
     }

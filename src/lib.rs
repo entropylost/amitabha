@@ -41,6 +41,14 @@ impl GridExpr {
         })
     }
     #[tracked]
+    pub fn last(self) -> Expr<Grid> {
+        Grid::from_comps_expr(GridComps {
+            size: Vec2::expr(self.size.x * 2, self.size.y),
+            directions: self.directions / 2,
+        })
+    }
+
+    #[tracked]
     pub fn lower_offset(self, dir: Expr<u32>) -> Expr<u32> {
         dir - self.directions / 2
     }
@@ -79,6 +87,10 @@ impl ProbeExpr {
     #[tracked]
     pub fn next(self) -> Expr<Probe> {
         Probe::expr(Vec2::expr(self.cell.x / 2, self.cell.y), self.dir)
+    }
+    #[tracked]
+    pub fn with_dir(self, dir: Expr<u32>) -> Expr<Probe> {
+        Probe::expr(self.cell, dir)
     }
 }
 
