@@ -373,6 +373,20 @@ impl StorageTracer {
             .read(probe.cell.x + grid.size.x * probe.cell.y + grid.size.x * grid.size.y * probe.dir)
     }
     #[tracked]
+    pub fn load_opt<F: MergeFluence>(
+        buffer: &BufferVar<Fluence<F>>,
+        grid: Expr<Grid>,
+        probe: Expr<Probe>,
+    ) -> Expr<Fluence<F>> {
+        if (probe.cell >= grid.size).any() {
+            Fluence::empty().expr()
+        } else {
+            buffer.read(
+                probe.cell.x + grid.size.x * probe.cell.y + grid.size.x * grid.size.y * probe.dir,
+            )
+        }
+    }
+    #[tracked]
     pub fn store<F: MergeFluence>(
         buffer: &BufferVar<Fluence<F>>,
         grid: Expr<Grid>,
@@ -442,13 +456,33 @@ where
 
         F::over(
             StorageTracer::load(last_buffer, last_grid, Probe::expr(last_cell, last_dir)),
-            StorageTracer::load(last_buffer, last_grid, midpoint),
+            StorageTracer::load_opt(last_buffer, last_grid, midpoint),
         )
     } else {
         let last_dir_lower = dir / 2;
         let last_dir_upper = dir / 2 + 1;
-        let midpoint_lower = Probe::expr(last_cell + Vec2::expr(1, offset / 2), last_dir_upper);
-        let midpoint_upper = Probe::expr(last_cell + Vec2::expr(1, offset / 2 + 1), last_dir_lower);
+        let midpoint_lower = Probe::expr(
+            last_cell
+                + Vec2::expr(
+                    1,
+                    (offset.cast_i32().cast_f32() / 2.0)
+                        .floor()
+                        .cast_i32()
+                        .cast_u32(),
+                ),
+            last_dir_upper,
+        );
+        let midpoint_upper = Probe::expr(
+            last_cell
+                + Vec2::expr(
+                    1,
+                    (offset.cast_i32().cast_f32() / 2.0)
+                        .ceil()
+                        .cast_i32()
+                        .cast_u32(),
+                ),
+            last_dir_lower,
+        );
 
         Fluence::blend(
             F::over(
@@ -457,7 +491,7 @@ where
                     last_grid,
                     Probe::expr(last_cell, last_dir_lower),
                 ),
-                StorageTracer::load(last_buffer, last_grid, midpoint_lower),
+                StorageTracer::load_opt(last_buffer, last_grid, midpoint_lower),
             ),
             F::over(
                 StorageTracer::load(
@@ -465,7 +499,7 @@ where
                     last_grid,
                     Probe::expr(last_cell, last_dir_upper),
                 ),
-                StorageTracer::load(last_buffer, last_grid, midpoint_upper),
+                StorageTracer::load_opt(last_buffer, last_grid, midpoint_upper),
             ),
         )
     }

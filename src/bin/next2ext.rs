@@ -4,9 +4,9 @@ use std::mem::swap;
 use amitabha::color::{Fluence, SingleF32};
 use amitabha::storage::BufferStorage;
 use amitabha::trace::{
-    AnalyticCursorTracer, Circle, SegmentedWorldMapper, StorageTracer, WorldSegment,
+    merge_up, AnalyticCursorTracer, Circle, SegmentedWorldMapper, StorageTracer, WorldSegment,
 };
-use amitabha::{merge_1_even, merge_1_odd, DispatchAxis, Grid, MergeKernelSettings};
+use amitabha::{merge_1_even, merge_1_odd, DispatchAxis, Grid, MergeKernelSettings, Probe};
 use keter::lang::types::vector::{Vec2, Vec3};
 use keter::prelude::*;
 use keter_testbed::{App, MouseButton};
@@ -67,17 +67,22 @@ fn main() {
 
     let cache_pyramid = (0..num_cascades + 1)
         .map(|i| {
-            let buffer = DEVICE.create_buffer::<Fluence<SingleF32>>(
+            DEVICE.create_buffer::<Fluence<SingleF32>>(
                 ((SIZE >> i) * SEGMENTS * SIZE * ((2 << i) + 1)) as usize,
-            );
-            tracer.cache_level(
-                Grid::new(Vec2::new(SIZE >> i, SEGMENTS * SIZE), 2 << i),
-                &buffer,
-                &light_pos,
-            );
-            buffer
+            )
         })
         .collect::<Vec<_>>();
+
+    let merge_up_kernel = DEVICE
+        .create_kernel::<fn(Grid, Buffer<Fluence<SingleF32>>, Buffer<Fluence<SingleF32>>)>(
+            &track!(|grid, last_buffer, buffer| {
+                let cell = dispatch_id().xy();
+                let dir = dispatch_id().z;
+                let probe = Probe::expr(cell, dir);
+                let fluence = merge_up(grid, probe, &last_buffer);
+                StorageTracer::store(&buffer, grid, probe, fluence);
+            }),
+        );
 
     let settings = MergeKernelSettings {
         dir_axis: DispatchAxis::Z,
@@ -150,6 +155,21 @@ fn main() {
         if rt.pressed_button(MouseButton::Left) {
             light_pos = rt.cursor_position;
         }
+        tracer.cache_level(
+            Grid::new(Vec2::new(SIZE, SEGMENTS * SIZE), 2),
+            &cache_pyramid[0],
+            &light_pos,
+        );
+        for i in 1..num_cascades + 1 {
+            let grid = Grid::new(Vec2::new(SIZE >> i, SEGMENTS * SIZE), 2 << i);
+            merge_up_kernel.dispatch(
+                [grid.size.x, grid.size.y, grid.directions + 1],
+                &grid,
+                &cache_pyramid[i - 1],
+                &cache_pyramid[i],
+            );
+        }
+
         for i in (0..num_cascades).rev() {
             swap(&mut buffer_a, &mut buffer_b);
             let grid = Grid::new(Vec2::new(SIZE >> i, SEGMENTS * SIZE), 2 << i);
