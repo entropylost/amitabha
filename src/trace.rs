@@ -452,7 +452,11 @@ where
     let offset = grid.lower_offset(dir);
     if dir % 2 == 0 {
         let last_dir = dir / 2;
-        let midpoint = Probe::expr(last_cell + Vec2::expr(1, offset / 2), last_dir);
+        let midpoint = Probe::expr(
+            // TODO: integer division ow
+            last_cell + Vec2::expr(1, (offset.cast_i32() / 2).cast_u32()),
+            last_dir,
+        );
 
         F::over(
             StorageTracer::load(last_buffer, last_grid, Probe::expr(last_cell, last_dir)),

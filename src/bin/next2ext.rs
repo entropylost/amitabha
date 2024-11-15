@@ -155,19 +155,18 @@ fn main() {
         if rt.pressed_button(MouseButton::Left) {
             light_pos = rt.cursor_position;
         }
-        tracer.cache_level(
-            Grid::new(Vec2::new(SIZE, SEGMENTS * SIZE), 2),
-            &cache_pyramid[0],
-            &light_pos,
-        );
-        for i in 1..num_cascades + 1 {
+        for i in 0..num_cascades + 1 {
             let grid = Grid::new(Vec2::new(SIZE >> i, SEGMENTS * SIZE), 2 << i);
-            merge_up_kernel.dispatch(
-                [grid.size.x, grid.size.y, grid.directions + 1],
-                &grid,
-                &cache_pyramid[i - 1],
-                &cache_pyramid[i],
-            );
+            if i < 2 {
+                tracer.cache_level(grid, &cache_pyramid[i], &light_pos);
+            } else {
+                merge_up_kernel.dispatch(
+                    [grid.size.x, grid.size.y, grid.directions + 1],
+                    &grid,
+                    &cache_pyramid[i - 1],
+                    &cache_pyramid[i],
+                );
+            }
         }
 
         for i in (0..num_cascades).rev() {
