@@ -520,31 +520,31 @@ fn main() {
             let radiance = if cell.y % 2 == 0 {
                 let c = Vec2::expr(cell.x + offset * 2, cell.y / 2 + 1);
 
-                let tr_0 = trace_between(
-                    grid.to_world(cell.cast_f32()),
-                    next_grid.to_world(c.cast_f32() - 2.0 * Vec2::<f32>::x().expr()),
-                    (pos, r),
-                );
-                let tr_1 = trace_between(
-                    grid.to_world(cell.cast_f32()),
-                    next_grid.to_world(c.cast_f32() + 2.0 * Vec2::<f32>::x().expr()),
-                    (pos, r),
-                );
+                // let tr_0 = trace_between(
+                //     grid.to_world(cell.cast_f32()),
+                //     next_grid.to_world(c.cast_f32() - 2.0 * Vec2::<f32>::x().expr()),
+                //     (pos, r),
+                // );
+                // let tr_1 = trace_between(
+                //     grid.to_world(cell.cast_f32()),
+                //     next_grid.to_world(c.cast_f32() + 2.0 * Vec2::<f32>::x().expr()),
+                //     (pos, r),
+                // );
 
-                // let tr_0 = trace_frustrum(
-                //     grid.to_world(cell.cast_f32()),
-                //     next_grid.to_world(c.cast_f32()),
-                //     grid.to_world(cell.cast_f32() - Vec2::x()),
-                //     next_grid.to_world(c.cast_f32() - 4.0 * Vec2::<f32>::x().expr()),
-                //     (pos, r),
-                // );
-                // let tr_1 = trace_frustrum(
-                //     grid.to_world(cell.cast_f32()),
-                //     next_grid.to_world(c.cast_f32()),
-                //     grid.to_world(cell.cast_f32() + Vec2::x()),
-                //     next_grid.to_world(c.cast_f32() + 4.0 * Vec2::<f32>::x().expr()),
-                //     (pos, r),
-                // );
+                let tr_0 = trace_frustrum(
+                    grid.to_world(cell.cast_f32()),
+                    next_grid.to_world(c.cast_f32()),
+                    grid.to_world(cell.cast_f32() - Vec2::x()),
+                    next_grid.to_world(c.cast_f32() - 4.0 * Vec2::<f32>::x().expr()),
+                    (pos, r),
+                );
+                let tr_1 = trace_frustrum(
+                    grid.to_world(cell.cast_f32()),
+                    next_grid.to_world(c.cast_f32()),
+                    grid.to_world(cell.cast_f32() + Vec2::x()),
+                    next_grid.to_world(c.cast_f32() + 4.0 * Vec2::<f32>::x().expr()),
+                    (pos, r),
+                );
 
                 // Grids are directly overlapping.
                 ((storage.load_grid(next_grid, Vec2::expr(cell.x, cell.y / 2), angle * 2)
@@ -575,32 +575,31 @@ fn main() {
                 let c_0 = Vec2::expr(cell.x + offset_0, cell.y / 2 + 1);
                 let c_1 = Vec2::expr(cell.x + offset_1, cell.y / 2 + 1);
 
-                let tr_0 = trace_between(
-                    grid.to_world(cell.cast_f32()),
-                    next_grid.to_world(c_0.cast_f32()),
-                    (pos, r),
-                );
-
-                let tr_1 = trace_between(
-                    grid.to_world(cell.cast_f32()),
-                    next_grid.to_world(c_1.cast_f32()),
-                    (pos, r),
-                );
-
-                // let tr_0 = trace_frustrum(
+                // let tr_0 = trace_between(
                 //     grid.to_world(cell.cast_f32()),
-                //     next_grid.to_world(c.cast_f32()),
-                //     grid.to_world(cell.cast_f32() - Vec2::x()),
-                //     next_grid.to_world(c.cast_f32() - 2.0 * Vec2::<f32>::x().expr()),
+                //     next_grid.to_world(c_0.cast_f32()),
                 //     (pos, r),
                 // );
-                // let tr_1 = trace_frustrum(
+                // let tr_1 = trace_between(
                 //     grid.to_world(cell.cast_f32()),
-                //     next_grid.to_world(c.cast_f32()),
-                //     grid.to_world(cell.cast_f32() + Vec2::x()),
-                //     next_grid.to_world(c.cast_f32() + 2.0 * Vec2::<f32>::x().expr()),
+                //     next_grid.to_world(c_1.cast_f32()),
                 //     (pos, r),
                 // );
+
+                let tr_0 = trace_frustrum(
+                    grid.to_world(cell.cast_f32()),
+                    next_grid.to_world(c.cast_f32()),
+                    grid.to_world(cell.cast_f32() - Vec2::x()),
+                    next_grid.to_world(c.cast_f32() - 2.0 * Vec2::<f32>::x().expr()),
+                    (pos, r),
+                );
+                let tr_1 = trace_frustrum(
+                    grid.to_world(cell.cast_f32()),
+                    next_grid.to_world(c.cast_f32()),
+                    grid.to_world(cell.cast_f32() + Vec2::x()),
+                    next_grid.to_world(c.cast_f32() + 2.0 * Vec2::<f32>::x().expr()),
+                    (pos, r),
+                );
 
                 // let tr = storage.load_grid_up(grid, cell, angle);
                 // let tr = trace(
