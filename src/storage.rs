@@ -23,12 +23,11 @@ impl<R: Radiance> RadianceStorage<R> for BufferStorage {
 
     #[tracked]
     fn load(&self, params: &Self::Params, grid: Expr<Grid>, probe: Expr<Probe>) -> Expr<R> {
-        if (probe.cell >= grid.size).any() {
+        let cell = probe.cell.cast_u32();
+        if (cell >= grid.size).any() {
             R::black().expr()
         } else {
-            params.read(
-                probe.cell.x + probe.cell.y * grid.size.x + probe.dir * grid.size.x * grid.size.y,
-            )
+            params.read(cell.x + grid.size.x * (cell.y + grid.size.y * probe.dir))
         }
     }
     #[tracked]
@@ -39,8 +38,10 @@ impl<R: Radiance> RadianceStorage<R> for BufferStorage {
         probe: Expr<Probe>,
         radiance: Expr<R>,
     ) {
+        let cell = probe.cell.cast_u32();
+
         params.write(
-            probe.cell.x + probe.cell.y * grid.size.x + probe.dir * grid.size.x * grid.size.y,
+            cell.x + grid.size.x * (cell.y + grid.size.y * probe.dir),
             radiance,
         );
     }

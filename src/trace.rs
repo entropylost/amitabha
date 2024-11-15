@@ -63,12 +63,11 @@ impl<F: MergeFluence, T> SegmentedWorldMapper<F, T> {
     pub fn to_world(
         &self,
         grid: Expr<Grid>,
-        cell: Expr<Vec2<u32>>,
+        cell: Expr<Vec2<i32>>,
         segment: Expr<WorldSegment>,
     ) -> Expr<Vec2<f32>> {
-        let cell = cell - Vec2::y() * segment.offset;
-        // oob handling lol
-        let pos_norm = cell.cast_i32().cast_f32()
+        let cell = cell - Vec2::y() * segment.offset.cast_i32();
+        let pos_norm = cell.cast_f32()
             / Vec2::expr(grid.size.x, grid.size.y / self.segments.len() as u32).cast_f32()
             - 0.5;
         let pos_rotated = Vec2::expr(
@@ -81,11 +80,10 @@ impl<F: MergeFluence, T> SegmentedWorldMapper<F, T> {
     pub fn contains(
         &self,
         grid: Expr<Grid>,
-        cell: Expr<Vec2<u32>>,
+        cell: Expr<Vec2<i32>>,
         segment: Expr<WorldSegment>,
     ) -> Expr<bool> {
-        let cell = cell - Vec2::y() * segment.offset;
-        cell.y < grid.size.y / self.segments.len() as u32
+        (cell.y - segment.offset.cast_i32()).cast_u32() < grid.size.y / self.segments.len() as u32
     }
 }
 impl<F: MergeFluence, T: WorldTracer<F>> SegmentedWorldMapper<F, T> {
@@ -102,6 +100,7 @@ impl<F: MergeFluence, T: WorldTracer<F>> SegmentedWorldMapper<F, T> {
                 let cell = dispatch_id().xy();
                 let segment = cell.y / (grid.size.y / self.segments.len() as u32);
                 let segment = self.segments.read(segment);
+                let cell = cell.cast_i32();
                 let dir = dispatch_id().z;
                 let start = self.to_world(grid, cell, segment);
                 let end_cell = cell + Vec2::expr(1, grid.lower_offset(dir));
@@ -129,7 +128,7 @@ impl<F: MergeFluence, T: WorldTracer<F>> Tracer<F> for SegmentedWorldMapper<F, T
         let next_grid = grid.next();
 
         let cell = probe.cell;
-        let segment = cell.y / (grid.size.y / self.segments.len() as u32);
+        let segment = cell.y.cast_u32() / (grid.size.y / self.segments.len() as u32);
         let segment = self.segments.read(segment);
         let dir = probe.dir;
 
@@ -192,9 +191,8 @@ pub struct WorldMapper<F: MergeFluence, T> {
 }
 impl<F: MergeFluence, T> WorldMapper<F, T> {
     #[tracked]
-    pub fn to_world(&self, grid: Expr<Grid>, cell: Expr<Vec2<u32>>) -> Expr<Vec2<f32>> {
-        // oob handling lol
-        let pos_norm = cell.cast_i32().cast_f32() / grid.size.cast_f32() - 0.5;
+    pub fn to_world(&self, grid: Expr<Grid>, cell: Expr<Vec2<i32>>) -> Expr<Vec2<f32>> {
+        let pos_norm = cell.cast_f32() / grid.size.cast_f32() - 0.5;
         let pos_rotated = Vec2::expr(
             pos_norm.x * self.rotation.x - pos_norm.y * self.rotation.y,
             pos_norm.x * self.rotation.y + pos_norm.y * self.rotation.x,
@@ -369,8 +367,8 @@ impl StorageTracer {
         grid: Expr<Grid>,
         probe: Expr<Probe>,
     ) -> Expr<Fluence<F>> {
-        buffer
-            .read(probe.cell.x + grid.size.x * probe.cell.y + grid.size.x * grid.size.y * probe.dir)
+        let cell = probe.cell.cast_u32();
+        buffer.read(cell.x + grid.size.x * (cell.y + grid.size.y * probe.dir))
     }
     #[tracked]
     pub fn load_opt<F: MergeFluence>(
@@ -378,12 +376,11 @@ impl StorageTracer {
         grid: Expr<Grid>,
         probe: Expr<Probe>,
     ) -> Expr<Fluence<F>> {
-        if (probe.cell >= grid.size).any() {
+        let cell = probe.cell.cast_u32();
+        if (cell >= grid.size).any() {
             Fluence::empty().expr()
         } else {
-            buffer.read(
-                probe.cell.x + grid.size.x * probe.cell.y + grid.size.x * grid.size.y * probe.dir,
-            )
+            buffer.read(cell.x + grid.size.x * (cell.y + grid.size.y * probe.dir))
         }
     }
     #[tracked]
@@ -393,8 +390,9 @@ impl StorageTracer {
         probe: Expr<Probe>,
         fluence: Expr<Fluence<F>>,
     ) {
+        let cell = probe.cell.cast_u32();
         buffer.write(
-            probe.cell.x + grid.size.x * probe.cell.y + grid.size.x * grid.size.y * probe.dir,
+            cell.x + grid.size.x * (cell.y + grid.size.y * probe.dir),
             fluence,
         );
     }
@@ -435,6 +433,7 @@ impl<F: MergeFluence> Tracer<F> for StorageTracer {
     }
 }
 
+// TODO: try to prevent integer division / multiplication
 #[tracked]
 pub fn merge_up<F: MergeFluence>(
     grid: Expr<Grid>,
@@ -449,12 +448,12 @@ where
 
     let last_grid = grid.last();
     let last_cell = Vec2::expr(cell.x * 2, cell.y);
-    let offset = grid.lower_offset(dir);
+    let offset = grid.ray_offset(dir);
     if dir % 2 == 0 {
         let last_dir = dir / 2;
         let midpoint = Probe::expr(
             // TODO: integer division ow
-            last_cell + Vec2::expr(1, (offset.cast_i32() / 2).cast_u32()),
+            last_cell + Vec2::expr(1, offset / 2),
             last_dir,
         );
 
@@ -465,26 +464,13 @@ where
     } else {
         let last_dir_lower = dir / 2;
         let last_dir_upper = dir / 2 + 1;
+        // TODO: Can simplify by expanding offset.
         let midpoint_lower = Probe::expr(
-            last_cell
-                + Vec2::expr(
-                    1,
-                    (offset.cast_i32().cast_f32() / 2.0)
-                        .floor()
-                        .cast_i32()
-                        .cast_u32(),
-                ),
+            last_cell + Vec2::expr(1, (offset.cast_f32() / 2.0).floor().cast_i32()),
             last_dir_upper,
         );
         let midpoint_upper = Probe::expr(
-            last_cell
-                + Vec2::expr(
-                    1,
-                    (offset.cast_i32().cast_f32() / 2.0)
-                        .ceil()
-                        .cast_i32()
-                        .cast_u32(),
-                ),
+            last_cell + Vec2::expr(1, (offset.cast_f32() / 2.0).ceil().cast_i32()),
             last_dir_lower,
         );
 

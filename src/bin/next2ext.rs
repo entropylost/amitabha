@@ -76,7 +76,7 @@ fn main() {
     let merge_up_kernel = DEVICE
         .create_kernel::<fn(Grid, Buffer<Fluence<SingleF32>>, Buffer<Fluence<SingleF32>>)>(
             &track!(|grid, last_buffer, buffer| {
-                let cell = dispatch_id().xy();
+                let cell = dispatch_id().xy().cast_i32();
                 let dir = dispatch_id().z;
                 let probe = Probe::expr(cell, dir);
                 let fluence = merge_up(grid, probe, &last_buffer);
@@ -106,21 +106,28 @@ fn main() {
             let cell = cell + Vec2::splat(DISPLAY_SIZE as f32 / 2.0);
 
             let cell = cell + Vec2::x();
-            let cell = cell.round().cast_u32();
+            let cell = cell.round().cast_i32();
 
             let grid = Grid::new(Vec2::new(DISPLAY_SIZE, SEGMENTS * SIZE), 1).expr();
 
+            // TODO: Divide by 2 is bad.
             let radiance = if cell.x % 2 == 0 {
                 if cell.y % 2 == 0 {
                     merge_1_even::<SingleF32, _>(
                         grid,
-                        Vec2::expr(cell.x + 1, cell.y / 2 + 2 * SIZE * rotation_index),
+                        Vec2::expr(
+                            cell.x + 1,
+                            cell.y / 2 + (2 * SIZE * rotation_index).cast_i32(),
+                        ),
                         (&BufferStorage, &next_radiance),
                     )
                 } else {
                     merge_1_even::<SingleF32, _>(
                         grid,
-                        Vec2::expr(cell.x + 1, cell.y / 2 + SIZE + 2 * SIZE * rotation_index),
+                        Vec2::expr(
+                            cell.x + 1,
+                            cell.y / 2 + (SIZE + 2 * SIZE * rotation_index).cast_i32(),
+                        ),
                         (&BufferStorage, &next_radiance),
                     )
                 }
@@ -131,14 +138,17 @@ fn main() {
                         grid,
                         Vec2::expr(
                             cell.x + 1,
-                            cell.y / 2 - 1 + SIZE + 2 * SIZE * rotation_index,
+                            cell.y / 2 - 1 + (SIZE + 2 * SIZE * rotation_index).cast_i32(),
                         ),
                         (&BufferStorage, &next_radiance),
                     )
                 } else {
                     merge_1_odd::<SingleF32, _>(
                         grid,
-                        Vec2::expr(cell.x + 1, cell.y / 2 + 2 * SIZE * rotation_index),
+                        Vec2::expr(
+                            cell.x + 1,
+                            cell.y / 2 + (2 * SIZE * rotation_index).cast_i32(),
+                        ),
                         (&BufferStorage, &next_radiance),
                     )
                 }

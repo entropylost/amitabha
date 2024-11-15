@@ -82,7 +82,7 @@ fn main() {
             let cell = cell + Vec2::splat(DISPLAY_SIZE as f32 / 2.0);
 
             let cell = cell + Vec2::x();
-            let cell = cell.round().cast_u32();
+            let cell = cell.round().cast_i32();
 
             let grid = Grid::new(Vec2::new(DISPLAY_SIZE, SEGMENTS * SIZE), 1).expr();
 
@@ -90,13 +90,19 @@ fn main() {
                 if cell.y % 2 == 0 {
                     merge_1_even::<BinaryF32, _>(
                         grid,
-                        Vec2::expr(cell.x + 1, cell.y / 2 + 2 * SIZE * rotation_index),
+                        Vec2::expr(
+                            cell.x + 1,
+                            cell.y / 2 + (2 * SIZE * rotation_index).cast_i32(),
+                        ),
                         (&BufferStorage, &next_radiance),
                     )
                 } else {
                     merge_1_even::<BinaryF32, _>(
                         grid,
-                        Vec2::expr(cell.x + 1, cell.y / 2 + SIZE + 2 * SIZE * rotation_index),
+                        Vec2::expr(
+                            cell.x + 1,
+                            cell.y / 2 + (SIZE + 2 * SIZE * rotation_index).cast_i32(),
+                        ),
                         (&BufferStorage, &next_radiance),
                     )
                 }
@@ -107,14 +113,17 @@ fn main() {
                         grid,
                         Vec2::expr(
                             cell.x + 1,
-                            cell.y / 2 - 1 + SIZE + 2 * SIZE * rotation_index,
+                            cell.y / 2 - 1 + (SIZE + 2 * SIZE * rotation_index).cast_i32(),
                         ),
                         (&BufferStorage, &next_radiance),
                     )
                 } else {
                     merge_1_odd::<BinaryF32, _>(
                         grid,
-                        Vec2::expr(cell.x + 1, cell.y / 2 + 2 * SIZE * rotation_index),
+                        Vec2::expr(
+                            cell.x + 1,
+                            cell.y / 2 + (2 * SIZE * rotation_index).cast_i32(),
+                        ),
                         (&BufferStorage, &next_radiance),
                     )
                 }

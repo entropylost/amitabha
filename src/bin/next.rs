@@ -63,7 +63,7 @@ fn main() {
     let final_buffer = DEVICE.create_buffer::<f32>((SIZE * SIZE) as usize);
 
     let finish = DEVICE.create_kernel::<fn(Buffer<f32>)>(&track!(|buffer| {
-        let cell = dispatch_id().xy();
+        let cell = dispatch_id().xy().cast_i32();
         let radiance_lower = BufferStorage.load(
             &buffer,
             Grid::new(Vec2::new(SIZE, SIZE), 2).expr(),
@@ -75,7 +75,7 @@ fn main() {
             Probe::expr(cell + Vec2::y(), 1_u32.expr()),
         );
         let radiance = radiance_lower + radiance_upper;
-        final_buffer.write(cell.x + cell.y * SIZE, radiance);
+        final_buffer.write(dispatch_id().x + dispatch_id().y * SIZE, radiance);
     }));
 
     let draw = DEVICE.create_kernel::<fn(Vec2<f32>)>(&track!(|rotation| {

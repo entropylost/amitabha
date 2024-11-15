@@ -49,12 +49,16 @@ impl GridExpr {
     }
 
     #[tracked]
-    pub fn lower_offset(self, dir: Expr<u32>) -> Expr<u32> {
-        dir - self.directions / 2
+    pub fn ray_offset(self, dir: Expr<u32>) -> Expr<i32> {
+        dir.cast_i32() - (self.directions / 2).cast_i32()
     }
     #[tracked]
-    pub fn upper_offset(self, dir: Expr<u32>) -> Expr<u32> {
-        dir - self.directions / 2 + 1
+    pub fn lower_offset(self, dir: Expr<u32>) -> Expr<i32> {
+        dir.cast_i32() - (self.directions / 2).cast_i32()
+    }
+    #[tracked]
+    pub fn upper_offset(self, dir: Expr<u32>) -> Expr<i32> {
+        dir.cast_i32() - (self.directions / 2).cast_i32() + 1
     }
     #[tracked]
     pub fn offset(self, dir: Expr<f32>) -> Expr<f32> {
@@ -75,11 +79,11 @@ impl GridExpr {
 #[derive(Debug, Clone, Copy, Value)]
 #[repr(C)]
 pub struct Probe {
-    pub cell: Vec2<u32>,
+    pub cell: Vec2<i32>,
     pub dir: u32,
 }
 impl Probe {
-    pub fn expr(cell: Expr<Vec2<u32>>, dir: Expr<u32>) -> Expr<Probe> {
+    pub fn expr(cell: Expr<Vec2<i32>>, dir: Expr<u32>) -> Expr<Probe> {
         Probe::from_comps_expr(ProbeComps { cell, dir })
     }
 }
@@ -151,7 +155,7 @@ impl<F: MergeFluence, T: Tracer<F>, S: RadianceStorage<F::Radiance>>
         )>(&track!(
             |grid, tracer_params, radiance_params, next_radiance_params| {
                 set_block_size(self.block_size);
-                let cell = Vec2::expr(self.cell_axis[0].get(), self.cell_axis[1].get());
+                let cell = Vec2::expr(self.cell_axis[0].get(), self.cell_axis[1].get()).cast_i32();
                 let dir = self.dir_axis.get();
                 let probe = Probe::expr(cell, dir);
 
@@ -202,7 +206,7 @@ impl<F: MergeFluence, T: Tracer<F>, S: RadianceStorage<F::Radiance>> MergeKernel
 #[tracked]
 pub fn merge_1_odd<F: MergeFluence, S: RadianceStorage<F::Radiance>>(
     grid: Expr<Grid>,
-    cell: Expr<Vec2<u32>>,
+    cell: Expr<Vec2<i32>>,
     (storage, next_radiance_params): (&S, &S::Params),
 ) -> Expr<F::Radiance> {
     let next_grid = grid.next();
@@ -231,7 +235,7 @@ pub fn merge_1_odd<F: MergeFluence, S: RadianceStorage<F::Radiance>>(
 #[tracked]
 pub fn merge_1_even<F: MergeFluence, S: RadianceStorage<F::Radiance>>(
     grid: Expr<Grid>,
-    cell: Expr<Vec2<u32>>,
+    cell: Expr<Vec2<i32>>,
     (storage, next_radiance_params): (&S, &S::Params),
 ) -> Expr<F::Radiance> {
     let next_grid = grid.next();
