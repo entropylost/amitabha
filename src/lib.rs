@@ -286,38 +286,27 @@ pub fn merge<F: MergeFluence, S: RadianceStorage<F::Radiance>, T: Tracer<F>>(
     let lower_offset = Vec2::expr(1, grid.lower_offset(dir));
     let upper_offset = Vec2::expr(1, grid.upper_offset(dir));
 
-    if cell.x % 2 == 0 {
-        let [lower, upper] = tracer.trace(tracer_params, grid, probe);
+    let factor = (cell.x % 2 == 0).select(2_i32.expr(), 1_i32.expr());
 
+    let [lower, upper] = tracer.trace(tracer_params, grid, probe);
+
+    let next_lower = F::over_radiance(
+        lower,
+        load_next(Probe::expr(cell + lower_offset * factor, lower_dir)),
+    );
+    let next_upper = F::over_radiance(
+        upper,
+        load_next(Probe::expr(cell + upper_offset * factor, upper_dir)),
+    );
+
+    if cell.x % 2 == 0 {
         // Could possibly be better as ((a + b) + (c + d)) * 0.5 instead of (a + b).mul_add(0.5, (c + d) * 0.5)
+        // Or can reorder and compact with the next one.
         F::Radiance::merge(
-            F::Radiance::blend(
-                load_next(Probe::expr(cell, lower_dir)),
-                F::over_radiance(
-                    lower,
-                    load_next(Probe::expr(cell + lower_offset * 2, lower_dir)),
-                ),
-            ),
-            F::Radiance::blend(
-                load_next(Probe::expr(cell, upper_dir)),
-                F::over_radiance(
-                    upper,
-                    load_next(Probe::expr(cell + upper_offset * 2, upper_dir)),
-                ),
-            ),
+            F::Radiance::blend(load_next(Probe::expr(cell, lower_dir)), next_lower),
+            F::Radiance::blend(load_next(Probe::expr(cell, upper_dir)), next_upper),
         )
     } else {
-        let [lower, upper] = tracer.trace(tracer_params, grid, probe);
-
-        F::Radiance::merge(
-            F::over_radiance(
-                lower,
-                load_next(Probe::expr(cell + lower_offset, lower_dir)),
-            ),
-            F::over_radiance(
-                upper,
-                load_next(Probe::expr(cell + upper_offset, upper_dir)),
-            ),
-        )
+        F::Radiance::merge(next_lower, next_upper)
     }
 }

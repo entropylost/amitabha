@@ -148,18 +148,11 @@ impl<F: MergeFluence, T: WorldTracer<F>> Tracer<F> for SegmentedWorldMapper<F, T
                 .opaque_if(!self.contains(grid, cell, segment))
         };
 
-        // TODO: Can join.
-        if cell.x % 2 == 0 {
-            [
-                trace(lower_offset * 2).restrict_angle(lower_size),
-                trace(upper_offset * 2).restrict_angle(upper_size),
-            ]
-        } else {
-            [
-                trace(lower_offset).restrict_angle(lower_size),
-                trace(upper_offset).restrict_angle(upper_size),
-            ]
-        }
+        let factor = (cell.x % 2 == 0).select(2_i32.expr(), 1_i32.expr());
+        [
+            trace(lower_offset * factor).restrict_angle(lower_size),
+            trace(upper_offset * factor).restrict_angle(upper_size),
+        ]
     }
 }
 
@@ -388,6 +381,7 @@ impl<F: MergeFluence> Tracer<F> for StorageTracer {
         grid: Expr<Grid>,
         probe: Expr<Probe>,
     ) -> [Expr<Fluence<F>>; 2] {
+        // TODO: Can compress if doing bindless or something.
         let next_grid = grid.next();
         let lower_size = next_grid.angle_size(*spacing, probe.dir * 2);
         let upper_size = next_grid.angle_size(*spacing, probe.dir * 2 + 1);
