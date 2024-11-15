@@ -44,6 +44,7 @@ pub trait WorldTracer<F: MergeFluence> {
     ) -> Expr<Fluence<F>>;
 }
 
+// TODO: Deduplicate.
 #[derive(Debug, Clone, Copy, PartialEq, Value)]
 #[repr(C)]
 pub struct WorldSegment {
@@ -140,43 +141,126 @@ impl<F: MergeFluence, T: WorldTracer<F>> Tracer<F> for SegmentedWorldMapper<F, T
         let lower_offset = Vec2::expr(1, grid.lower_offset(dir));
         let upper_offset = Vec2::expr(1, grid.upper_offset(dir));
 
+        let trace = |offset: Expr<Vec2<i32>>| {
+            let cell = cell + offset;
+            self.tracer
+                .trace(params, start, self.to_world(grid, cell, segment))
+                .opaque_if(!self.contains(grid, cell, segment))
+        };
+
+        // TODO: Can join.
         if cell.x % 2 == 0 {
             [
-                self.tracer
-                    .trace(
-                        params,
-                        start,
-                        self.to_world(grid, cell + lower_offset * 2, segment),
-                    )
-                    .restrict_angle(lower_size)
-                    .opaque_if(!self.contains(grid, cell + lower_offset * 2, segment)),
-                self.tracer
-                    .trace(
-                        params,
-                        start,
-                        self.to_world(grid, cell + upper_offset * 2, segment),
-                    )
-                    .restrict_angle(upper_size)
-                    .opaque_if(!self.contains(grid, cell + upper_offset * 2, segment)),
+                trace(lower_offset * 2).restrict_angle(lower_size),
+                trace(upper_offset * 2).restrict_angle(upper_size),
             ]
         } else {
             [
-                self.tracer
-                    .trace(
-                        params,
-                        start,
-                        self.to_world(grid, cell + lower_offset, segment),
-                    )
-                    .restrict_angle(lower_size)
-                    .opaque_if(!self.contains(grid, cell + lower_offset, segment)),
-                self.tracer
-                    .trace(
-                        params,
-                        start,
-                        self.to_world(grid, cell + upper_offset, segment),
-                    )
-                    .restrict_angle(upper_size)
-                    .opaque_if(!self.contains(grid, cell + upper_offset, segment)),
+                trace(lower_offset).restrict_angle(lower_size),
+                trace(upper_offset).restrict_angle(upper_size),
+            ]
+        }
+    }
+}
+
+pub struct SegmentedFrustrumWorldMapper<F: MergeFluence, T> {
+    pub tracer: T,
+    pub segments: Buffer<WorldSegment>,
+    pub frustrums: u32,
+    pub _marker: PhantomData<F>,
+}
+impl<F: MergeFluence, T> SegmentedFrustrumWorldMapper<F, T> {
+    #[tracked]
+    pub fn to_world(
+        &self,
+        grid: Expr<Grid>,
+        cell: Expr<Vec2<f32>>,
+        segment: Expr<WorldSegment>,
+    ) -> Expr<Vec2<f32>> {
+        let cell = cell - Vec2::y() * segment.offset.cast_f32();
+        let pos_norm = cell
+            / Vec2::expr(grid.size.x, grid.size.y / self.segments.len() as u32).cast_f32()
+            - 0.5;
+        let pos_rotated = Vec2::expr(
+            pos_norm.x * segment.rotation.x - pos_norm.y * segment.rotation.y,
+            pos_norm.x * segment.rotation.y + pos_norm.y * segment.rotation.x,
+        );
+        pos_rotated * segment.size + segment.origin
+    }
+    #[tracked]
+    pub fn contains(
+        &self,
+        grid: Expr<Grid>,
+        cell: Expr<Vec2<f32>>,
+        segment: Expr<WorldSegment>,
+    ) -> Expr<bool> {
+        let c = cell.y - segment.offset.cast_f32();
+        c >= 0.0 && c < (grid.size.y / self.segments.len() as u32).cast_f32()
+    }
+}
+
+impl<F: MergeFluence, T: WorldTracer<F>> Tracer<F> for SegmentedFrustrumWorldMapper<F, T>
+where
+    F::Transmittance: PartialTransmittance,
+{
+    type Params = T::Params;
+    #[tracked]
+    fn trace(
+        &self,
+        params: &Self::Params,
+        grid: Expr<Grid>,
+        probe: Expr<Probe>,
+    ) -> [Expr<Fluence<F>>; 2] {
+        let next_grid = grid.next();
+
+        let cell = probe.cell;
+        let segment = cell.y.cast_u32() / (grid.size.y / self.segments.len() as u32);
+        let segment = self.segments.read(segment);
+        let dir = probe.dir;
+
+        let start = cell.cast_f32();
+        let upper = cell.cast_f32() + Vec2::y() * 0.5;
+        let lower = cell.cast_f32() - Vec2::y() * 0.5;
+        let end1 = cell.cast_f32() + Vec2::expr(1.0, grid.offset(dir.cast_f32()));
+        let end2 = cell.cast_f32() + 2.0 * Vec2::expr(1.0, grid.offset(dir.cast_f32()));
+        let spacing = (segment.size.x / next_grid.size.x.cast::<f32>())
+            / (segment.size.y / (next_grid.size.y / self.segments.len() as u32).cast::<f32>());
+        let lower_size = next_grid.angle_size(spacing, dir * 2);
+        let upper_size = next_grid.angle_size(spacing, dir * 2 + 1);
+        let lower_offset = Vec2::expr(1, grid.lower_offset(dir));
+        let upper_offset = Vec2::expr(1, grid.upper_offset(dir));
+
+        let trace =
+            |offset: Expr<Vec2<i32>>, other_start: Expr<Vec2<f32>>, end: Expr<Vec2<f32>>| {
+                let other_end = cell + offset;
+                Fluence::blend_n(
+                    &(0..self.frustrums)
+                        .map(|i| {
+                            let a = i as f32 / (self.frustrums - 1) as f32;
+                            let b = 1.0 - a;
+                            let s = other_start * a + start * b;
+                            let e = end * a + other_end.cast_f32() * b;
+                            self.tracer
+                                .trace(
+                                    params,
+                                    self.to_world(grid, s, segment),
+                                    self.to_world(grid, e, segment),
+                                )
+                                .opaque_if(!self.contains(grid, e, segment))
+                        })
+                        .collect::<Vec<_>>(),
+                )
+            };
+
+        if cell.x % 2 == 0 {
+            [
+                trace(lower_offset * 2, lower, end2).restrict_angle(lower_size),
+                trace(upper_offset * 2, upper, end2).restrict_angle(upper_size),
+            ]
+        } else {
+            [
+                trace(lower_offset, lower, end1).restrict_angle(lower_size),
+                trace(upper_offset, upper, end1).restrict_angle(upper_size),
             ]
         }
     }

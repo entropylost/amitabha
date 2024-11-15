@@ -65,6 +65,13 @@ where
             F::Transmittance::blend(a.transmittance, b.transmittance),
         )
     }
+    #[tracked]
+    pub fn blend_n(v: &[Expr<Self>]) -> Expr<Self> {
+        Fluence::expr(
+            F::Radiance::blend_n(&v.iter().map(|x| x.radiance).collect::<Vec<_>>()),
+            F::Transmittance::blend_n(&v.iter().map(|x| x.transmittance).collect::<Vec<_>>()),
+        )
+    }
 }
 
 pub trait MergeFluence: 'static + Copy {
@@ -79,6 +86,7 @@ pub trait Radiance: Value {
     // Use *0.5 instead of /2.0 since that actually matters.
     fn merge(a: Expr<Self>, b: Expr<Self>) -> Expr<Self>;
     fn blend(a: Expr<Self>, b: Expr<Self>) -> Expr<Self>;
+    fn blend_n(v: &[Expr<Self>]) -> Expr<Self>;
     fn scale(this: Expr<Self>, scale: Expr<f32>) -> Expr<Self>;
     #[tracked]
     fn restrict_angle(this: Expr<Self>, angle: Expr<f32>) -> Expr<Self> {
@@ -97,6 +105,11 @@ impl Radiance for f32 {
     #[tracked]
     fn blend(a: Expr<Self>, b: Expr<Self>) -> Expr<Self> {
         (a + b) * 0.5
+    }
+    #[tracked]
+    fn blend_n(v: &[Expr<Self>]) -> Expr<Self> {
+        let sum = v.iter().fold(0.0.expr(), |sum, &x| sum + x);
+        sum * (1.0 / v.len() as f32)
     }
     #[tracked]
     fn scale(this: Expr<Self>, scale: Expr<f32>) -> Expr<Self> {
@@ -121,6 +134,11 @@ impl Radiance for Vec3<f32> {
         (a + b) * 0.5
     }
     #[tracked]
+    fn blend_n(v: &[Expr<Self>]) -> Expr<Self> {
+        let sum = v.iter().fold(Vec3::splat_expr(0.0_f32), |sum, &x| sum + x);
+        sum * (1.0 / v.len() as f32)
+    }
+    #[tracked]
     fn scale(this: Expr<Self>, scale: Expr<f32>) -> Expr<Self> {
         this * scale
     }
@@ -136,6 +154,7 @@ impl Radiance for Vec3<f32> {
 
 pub trait PartialTransmittance: Transmittance {
     fn blend(a: Expr<Self>, b: Expr<Self>) -> Expr<Self>;
+    fn blend_n(v: &[Expr<Self>]) -> Expr<Self>;
 }
 
 pub trait Transmittance: Value {
@@ -162,6 +181,11 @@ impl PartialTransmittance for f32 {
     #[tracked]
     fn blend(a: Expr<Self>, b: Expr<Self>) -> Expr<Self> {
         (a + b) * 0.5
+    }
+    #[tracked]
+    fn blend_n(v: &[Expr<Self>]) -> Expr<Self> {
+        let sum = v.iter().fold(0.0.expr(), |sum, &x| sum + x);
+        sum * (1.0 / v.len() as f32)
     }
 }
 

@@ -1,4 +1,5 @@
-use super::*;
+use keter::lang::types::vector::Vec3;
+use keter::prelude::*;
 
 // https://github.com/markjarzynski/PCG3D/blob/master/pcg3d.hlsl
 #[tracked]

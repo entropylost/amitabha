@@ -1,9 +1,9 @@
 use std::marker::PhantomData;
 use std::mem::swap;
 
-use amitabha::color::BinaryF32;
+use amitabha::color::SingleF32;
 use amitabha::storage::BufferStorage;
-use amitabha::trace::{AnalyticCursorTracer, Circle, SegmentedWorldMapper, WorldSegment};
+use amitabha::trace::{AnalyticCursorTracer, Circle, SegmentedFrustrumWorldMapper, WorldSegment};
 use amitabha::{merge_1_even, merge_1_odd, DispatchAxis, Grid, MergeKernelSettings};
 use keter::lang::types::vector::{Vec2, Vec3};
 use keter::prelude::*;
@@ -24,7 +24,7 @@ fn main() {
     let mut buffer_a = DEVICE.create_buffer::<f32>((SEGMENTS * SIZE * SIZE * 2) as usize);
     let mut buffer_b = DEVICE.create_buffer::<f32>((SEGMENTS * SIZE * SIZE * 2) as usize);
 
-    let tracer = AnalyticCursorTracer::<BinaryF32> {
+    let tracer = AnalyticCursorTracer::<SingleF32> {
         circles: vec![
             Circle {
                 center: Vec2::new(0.0, 0.0),
@@ -54,10 +54,11 @@ fn main() {
         }
     }
 
-    let tracer = SegmentedWorldMapper {
+    let tracer = SegmentedFrustrumWorldMapper {
         tracer,
         segments: DEVICE.create_buffer_from_slice(&segments),
-        _marker: PhantomData::<BinaryF32>,
+        frustrums: 10,
+        _marker: PhantomData::<SingleF32>,
     };
 
     let settings = MergeKernelSettings {
@@ -66,7 +67,7 @@ fn main() {
         block_size: [8, 8, 1],
         storage: &BufferStorage,
         tracer: &tracer,
-        _marker: PhantomData::<BinaryF32>,
+        _marker: PhantomData::<SingleF32>,
     };
 
     let kernel = settings.build_kernel();
@@ -88,7 +89,7 @@ fn main() {
 
             let radiance = if cell.x % 2 == 0 {
                 if cell.y % 2 == 0 {
-                    merge_1_even::<BinaryF32, _>(
+                    merge_1_even::<SingleF32, _>(
                         grid,
                         Vec2::expr(
                             cell.x + 1,
@@ -97,7 +98,7 @@ fn main() {
                         (&BufferStorage, &next_radiance),
                     )
                 } else {
-                    merge_1_even::<BinaryF32, _>(
+                    merge_1_even::<SingleF32, _>(
                         grid,
                         Vec2::expr(
                             cell.x + 1,
@@ -109,7 +110,7 @@ fn main() {
             } else {
                 if cell.y % 2 == 0 {
                     // Need to collect from odd cells.
-                    merge_1_odd::<BinaryF32, _>(
+                    merge_1_odd::<SingleF32, _>(
                         grid,
                         Vec2::expr(
                             cell.x + 1,
@@ -118,7 +119,7 @@ fn main() {
                         (&BufferStorage, &next_radiance),
                     )
                 } else {
-                    merge_1_odd::<BinaryF32, _>(
+                    merge_1_odd::<SingleF32, _>(
                         grid,
                         Vec2::expr(
                             cell.x + 1,
