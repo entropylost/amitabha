@@ -16,6 +16,7 @@ pub mod trace;
 use trace::Tracer;
 pub mod storage;
 use storage::RadianceStorage;
+pub mod utils;
 
 #[derive(Debug, Clone, Copy, Value)]
 #[repr(C)]

@@ -6,6 +6,7 @@ use amitabha::storage::BufferStorage;
 use amitabha::trace::{
     merge_up, AnalyticCursorTracer, Circle, SegmentedWorldMapper, StorageTracer, WorldSegment,
 };
+use amitabha::utils::pcgf;
 use amitabha::{merge_1_even, merge_1_odd, DispatchAxis, Grid, MergeKernelSettings, Probe};
 use keter::lang::types::vector::{Vec2, Vec3};
 use keter::prelude::*;
@@ -161,6 +162,15 @@ fn main() {
         }
     ));
 
+    let apply_noise = DEVICE.create_kernel::<fn()>(&track!(|| {
+        let noise = pcgf(dispatch_id().x + (dispatch_id().y << 16));
+        let noise = noise / 255.0 * 6.0;
+        app.display().write(
+            dispatch_id().xy(),
+            app.display().read(dispatch_id().xy()) + Vec3::splat_expr(noise),
+        );
+    }));
+
     app.run(|rt, _scope| {
         if rt.pressed_button(MouseButton::Left) {
             light_pos = rt.cursor_position;
@@ -203,6 +213,7 @@ fn main() {
                 &buffer_a,
             );
         }
+        apply_noise.dispatch([DISPLAY_SIZE, DISPLAY_SIZE, 1]);
 
         rt.log_fps();
     });
