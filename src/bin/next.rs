@@ -2,9 +2,9 @@ use std::marker::PhantomData;
 use std::mem::swap;
 
 use amitabha::color::BinaryF32;
-use amitabha::storage::{Axis, BufferStorage, RadianceStorage};
+use amitabha::storage::{BufferStorage, RadianceStorage};
 use amitabha::trace::{AnalyticCursorTracer, Circle, WorldMapper};
-use amitabha::{DispatchAxis, Grid, MergeKernelSettings, Probe};
+use amitabha::{Axis, Grid, MergeKernelSettings, Probe};
 use keter::lang::types::vector::{Vec2, Vec3};
 use keter::prelude::*;
 use keter_testbed::{App, MouseButton};
@@ -52,8 +52,7 @@ fn main() {
         };
 
         let settings = MergeKernelSettings {
-            dir_axis: DispatchAxis::Z,
-            cell_axis: [DispatchAxis::X, DispatchAxis::Y],
+            axes: [Axis::CellX, Axis::CellY, Axis::Direction],
             block_size: [8, 8, 1],
             storage: &merge_storage,
             tracer: &tracer,

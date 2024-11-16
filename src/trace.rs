@@ -5,8 +5,7 @@ use keter::prelude::*;
 use keter::runtime::{AsKernelArg, KernelParameter};
 
 use crate::color::{Fluence, MergeFluence, PartialTransmittance, Radiance};
-use crate::storage::Axis;
-use crate::{Grid, Probe};
+use crate::{Axis, Grid, Probe};
 
 pub trait Tracer<F: MergeFluence> {
     type Params: KernelParameter;

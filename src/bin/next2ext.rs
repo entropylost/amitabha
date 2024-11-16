@@ -1,13 +1,14 @@
 use std::marker::PhantomData;
 use std::mem::swap;
+use std::time::Instant;
 
 use amitabha::color::{Fluence, SingleF32};
-use amitabha::storage::{Axis, BufferStorage};
+use amitabha::storage::BufferStorage;
 use amitabha::trace::{
     merge_up, AnalyticCursorTracer, Circle, SegmentedWorldMapper, StorageTracer, WorldSegment,
 };
 use amitabha::utils::pcgf;
-use amitabha::{merge_1_even, merge_1_odd, DispatchAxis, Grid, MergeKernelSettings, Probe};
+use amitabha::{merge_1_even, merge_1_odd, Axis, Grid, MergeKernelSettings, Probe};
 use keter::lang::types::vector::{Vec2, Vec3};
 use keter::prelude::*;
 use keter_testbed::{App, MouseButton};
@@ -66,12 +67,10 @@ fn main() {
         _marker: PhantomData::<SingleF32>,
     };
 
-    let ray_storage = StorageTracer {
-        axes: [Axis::CellX, Axis::CellY, Axis::Direction],
-    };
-    let merge_storage = BufferStorage {
-        axes: [Axis::CellX, Axis::CellY, Axis::Direction],
-    };
+    let axes = [Axis::CellY, Axis::Direction, Axis::CellX];
+
+    let ray_storage = StorageTracer { axes };
+    let merge_storage = BufferStorage { axes };
 
     let cache_pyramid = (0..num_cascades + 1)
         .map(|i| {
@@ -93,9 +92,8 @@ fn main() {
         );
 
     let settings = MergeKernelSettings {
-        dir_axis: DispatchAxis::Z,
-        cell_axis: [DispatchAxis::X, DispatchAxis::Y],
-        block_size: [8, 8, 1],
+        axes,
+        block_size: [32, 2, 2],
         storage: &merge_storage,
         tracer: &ray_storage,
         _marker: PhantomData::<SingleF32>,
@@ -178,6 +176,8 @@ fn main() {
         );
     }));
 
+    let mut merge_timings = vec![vec![]; num_cascades];
+
     app.run(|rt, _scope| {
         if rt.pressed_button(MouseButton::Left) {
             light_pos = rt.cursor_position;
@@ -196,10 +196,12 @@ fn main() {
             }
         }
 
+        let start = Instant::now();
+
         for i in (0..num_cascades).rev() {
             swap(&mut buffer_a, &mut buffer_b);
             let grid = Grid::new(Vec2::new(SIZE >> i, SEGMENTS * SIZE), 2 << i);
-            kernel
+            let timings = kernel
                 .dispatch(
                     grid,
                     &(
@@ -210,8 +212,16 @@ fn main() {
                     &buffer_a,
                     &buffer_b,
                 )
-                .execute();
+                .execute_timed();
+            let time = timings.iter().map(|(_, t)| *t as f64).sum::<f64>();
+            merge_timings[i].push(time);
         }
+
+        let elapsed = start.elapsed();
+        if rt.tick % 100 == 0 {
+            println!("Elapsed: {:?}", elapsed);
+        }
+
         for (i, r) in rotations.iter().enumerate() {
             draw.dispatch(
                 [DISPLAY_SIZE, DISPLAY_SIZE, 1],
@@ -222,6 +232,19 @@ fn main() {
         }
         apply_noise.dispatch([DISPLAY_SIZE, DISPLAY_SIZE, 1]);
 
-        rt.log_fps();
+        if rt.tick % 100 == 0 {
+            println!("Merge Timings:");
+            let mut total = 0.0;
+            let mut total_variance = 0.0;
+            for (i, timings) in merge_timings.iter_mut().enumerate() {
+                let avg = timings.iter().sum::<f64>() / 100.0;
+                total += avg;
+                let variance = timings.iter().map(|t| (t - avg).powi(2)).sum::<f64>() / 100.0;
+                total_variance += variance;
+                println!("    {}: {:.2}ms, sd {:.3}ms", i, avg, variance.sqrt());
+                timings.clear();
+            }
+            println!("Total: {:.3}ms, sd {:.3}ms", total, total_variance.sqrt());
+        }
     });
 }

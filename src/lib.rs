@@ -100,28 +100,53 @@ impl ProbeExpr {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DispatchAxis {
-    X = 0,
-    Y = 1,
-    Z = 2,
+pub enum Axis {
+    CellX,
+    CellY,
+    Direction,
 }
-impl DispatchAxis {
-    fn get(self) -> Expr<u32> {
+impl Axis {
+    pub fn get(self, (cell, dir): (Expr<Vec2<u32>>, Expr<u32>)) -> Expr<u32> {
         match self {
-            DispatchAxis::X => dispatch_id().x,
-            DispatchAxis::Y => dispatch_id().y,
-            DispatchAxis::Z => dispatch_id().z,
+            Axis::CellX => cell.x,
+            Axis::CellY => cell.y,
+            Axis::Direction => dir,
         }
     }
-    fn set(self, array: &mut [u32; 3], value: u32) {
-        array[self as usize] = value;
+    #[tracked]
+    pub fn join(
+        mut axes: [Self; 3],
+        probe: (Expr<Vec2<u32>>, Expr<u32>),
+        size: (Expr<Vec2<u32>>, Expr<u32>),
+    ) -> Expr<u32> {
+        axes.reverse();
+        let mut result = axes[0].get(probe);
+        #[allow(unused_parens)]
+        for &axis in &axes[1..] {
+            result = result * axis.get(size) + axis.get(probe);
+        }
+        result
+    }
+    #[tracked]
+    pub fn dispatch_id(axes: [Self; 3]) -> (Expr<Vec2<u32>>, Expr<u32>) {
+        fn dispatch_id_n(n: usize) -> Expr<u32> {
+            match n {
+                0 => dispatch_id().x,
+                1 => dispatch_id().y,
+                2 => dispatch_id().z,
+                _ => unreachable!(),
+            }
+        }
+        let cell_x = dispatch_id_n(axes.iter().position(|&x| x == Axis::CellX).unwrap());
+        let cell_y = dispatch_id_n(axes.iter().position(|&x| x == Axis::CellY).unwrap());
+        let dir = dispatch_id_n(axes.iter().position(|&x| x == Axis::Direction).unwrap());
+        (Vec2::expr(cell_x, cell_y), dir)
     }
 }
 
 #[derive(Debug, Clone, Copy)]
 pub struct MergeKernelSettings<'a, F: MergeFluence, T: Tracer<F>, S: RadianceStorage<F::Radiance>> {
-    pub dir_axis: DispatchAxis,
-    pub cell_axis: [DispatchAxis; 2],
+    pub axes: [Axis; 3],
     pub block_size: [u32; 3],
     // TODO: Use boxing.
     pub storage: &'a S,
@@ -139,8 +164,7 @@ pub struct MergeKernel<F: MergeFluence, T: Tracer<F>, S: RadianceStorage<F::Radi
             <S::Params as KernelParameter>::Arg,
         ),
     >,
-    dir_axis: DispatchAxis,
-    cell_axis: [DispatchAxis; 2],
+    axes: [Axis; 3],
     _marker: PhantomData<F>,
 }
 
@@ -156,8 +180,8 @@ impl<F: MergeFluence, T: Tracer<F>, S: RadianceStorage<F::Radiance>>
         )>(&track!(
             |grid, tracer_params, radiance_params, next_radiance_params| {
                 set_block_size(self.block_size);
-                let cell = Vec2::expr(self.cell_axis[0].get(), self.cell_axis[1].get()).cast_i32();
-                let dir = self.dir_axis.get();
+                let (cell, dir) = Axis::dispatch_id(self.axes);
+                let cell = cell.cast_i32();
                 let probe = Probe::expr(cell, dir);
 
                 let value = merge(
@@ -171,8 +195,7 @@ impl<F: MergeFluence, T: Tracer<F>, S: RadianceStorage<F::Radiance>>
         ));
         MergeKernel {
             kernel,
-            dir_axis: self.dir_axis,
-            cell_axis: self.cell_axis,
+            axes: self.axes,
             _marker: PhantomData,
         }
     }
@@ -185,11 +208,11 @@ impl<F: MergeFluence, T: Tracer<F>, S: RadianceStorage<F::Radiance>> MergeKernel
         radiance_params: &impl AsKernelArg<Output = <S::Params as KernelParameter>::Arg>,
         next_radiance_params: &impl AsKernelArg<Output = <S::Params as KernelParameter>::Arg>,
     ) -> NodeConfigs<'static> {
-        let mut dispatch_size = [0; 3];
-        self.dir_axis.set(&mut dispatch_size, grid.directions);
-        self.cell_axis[0].set(&mut dispatch_size, grid.size.x);
-        self.cell_axis[1].set(&mut dispatch_size, grid.size.y);
-        assert!(dispatch_size.iter().all(|&x| x > 0));
+        let dispatch_size = std::array::from_fn(|i| match self.axes[i] {
+            Axis::CellX => grid.size.x,
+            Axis::CellY => grid.size.y,
+            Axis::Direction => grid.directions,
+        });
         self.kernel
             .dispatch_async(
                 dispatch_size,
