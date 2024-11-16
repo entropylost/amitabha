@@ -142,6 +142,14 @@ impl Axis {
         let dir = dispatch_id_n(axes.iter().position(|&x| x == Axis::Direction).unwrap());
         (Vec2::expr(cell_x, cell_y), dir)
     }
+    #[tracked]
+    pub fn dispatch_size(axes: [Self; 3], grid: Grid) -> [u32; 3] {
+        axes.map(|axis| match axis {
+            Axis::CellX => grid.size.x,
+            Axis::CellY => grid.size.y,
+            Axis::Direction => grid.directions,
+        })
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -208,11 +216,7 @@ impl<F: MergeFluence, T: Tracer<F>, S: RadianceStorage<F::Radiance>> MergeKernel
         radiance_params: &impl AsKernelArg<Output = <S::Params as KernelParameter>::Arg>,
         next_radiance_params: &impl AsKernelArg<Output = <S::Params as KernelParameter>::Arg>,
     ) -> NodeConfigs<'static> {
-        let dispatch_size = std::array::from_fn(|i| match self.axes[i] {
-            Axis::CellX => grid.size.x,
-            Axis::CellY => grid.size.y,
-            Axis::Direction => grid.directions,
-        });
+        let dispatch_size = Axis::dispatch_size(self.axes, grid);
         self.kernel
             .dispatch_async(
                 dispatch_size,
