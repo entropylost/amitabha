@@ -2,7 +2,7 @@ use std::marker::PhantomData;
 use std::mem::swap;
 
 use amitabha::color::BinaryF32;
-use amitabha::storage::{BufferStorage, RadianceStorage};
+use amitabha::storage::{Axis, BufferStorage, RadianceStorage};
 use amitabha::trace::{AnalyticCursorTracer, Circle, WorldMapper};
 use amitabha::{DispatchAxis, Grid, MergeKernelSettings, Probe};
 use keter::lang::types::vector::{Vec2, Vec3};
@@ -24,6 +24,10 @@ fn main() {
     let mut buffer_b = DEVICE.create_buffer::<f32>((SIZE * SIZE * 2) as usize);
 
     let rotations = [Vec2::x(), Vec2::y(), -Vec2::x(), -Vec2::y()];
+
+    let merge_storage = BufferStorage {
+        axes: [Axis::CellX, Axis::CellY, Axis::Direction],
+    };
 
     let kernels = rotations.map(|rotation| {
         let tracer = WorldMapper {
@@ -51,7 +55,7 @@ fn main() {
             dir_axis: DispatchAxis::Z,
             cell_axis: [DispatchAxis::X, DispatchAxis::Y],
             block_size: [8, 8, 1],
-            storage: &BufferStorage,
+            storage: &merge_storage,
             tracer: &tracer,
             _marker: PhantomData::<BinaryF32>,
         };
@@ -64,12 +68,12 @@ fn main() {
 
     let finish = DEVICE.create_kernel::<fn(Buffer<f32>)>(&track!(|buffer| {
         let cell = dispatch_id().xy().cast_i32();
-        let radiance_lower = BufferStorage.load(
+        let radiance_lower = merge_storage.load(
             &buffer,
             Grid::new(Vec2::new(SIZE, SIZE), 2).expr(),
             Probe::expr(cell, 0_u32.expr()),
         );
-        let radiance_upper = BufferStorage.load(
+        let radiance_upper = merge_storage.load(
             &buffer,
             Grid::new(Vec2::new(SIZE, SIZE), 2).expr(),
             Probe::expr(cell + Vec2::y(), 1_u32.expr()),

@@ -2,7 +2,7 @@ use std::marker::PhantomData;
 use std::mem::swap;
 
 use amitabha::color::{Fluence, SingleF32};
-use amitabha::storage::BufferStorage;
+use amitabha::storage::{Axis, BufferStorage};
 use amitabha::trace::{
     merge_up, AnalyticCursorTracer, Circle, SegmentedWorldMapper, StorageTracer, WorldSegment,
 };
@@ -66,6 +66,13 @@ fn main() {
         _marker: PhantomData::<SingleF32>,
     };
 
+    let ray_storage = StorageTracer {
+        axes: [Axis::CellX, Axis::CellY, Axis::Direction],
+    };
+    let merge_storage = BufferStorage {
+        axes: [Axis::CellX, Axis::CellY, Axis::Direction],
+    };
+
     let cache_pyramid = (0..num_cascades + 1)
         .map(|i| {
             DEVICE.create_buffer::<Fluence<SingleF32>>(
@@ -80,8 +87,8 @@ fn main() {
                 let cell = dispatch_id().xy().cast_i32();
                 let dir = dispatch_id().z;
                 let probe = Probe::expr(cell, dir);
-                let fluence = merge_up(grid, probe, &last_buffer);
-                StorageTracer::store(&buffer, grid, probe, fluence);
+                let fluence = merge_up(&ray_storage, &last_buffer, grid, probe);
+                ray_storage.store(&buffer, grid, probe, fluence);
             }),
         );
 
@@ -89,8 +96,8 @@ fn main() {
         dir_axis: DispatchAxis::Z,
         cell_axis: [DispatchAxis::X, DispatchAxis::Y],
         block_size: [8, 8, 1],
-        storage: &BufferStorage,
-        tracer: &StorageTracer,
+        storage: &merge_storage,
+        tracer: &ray_storage,
         _marker: PhantomData::<SingleF32>,
     };
 
@@ -120,7 +127,7 @@ fn main() {
                             cell.x + 1,
                             cell.y / 2 + (2 * SIZE * rotation_index).cast_i32(),
                         ),
-                        (&BufferStorage, &next_radiance),
+                        (&merge_storage, &next_radiance),
                     )
                 } else {
                     merge_1_even::<SingleF32, _>(
@@ -129,7 +136,7 @@ fn main() {
                             cell.x + 1,
                             cell.y / 2 + (SIZE + 2 * SIZE * rotation_index).cast_i32(),
                         ),
-                        (&BufferStorage, &next_radiance),
+                        (&merge_storage, &next_radiance),
                     )
                 }
             } else {
@@ -141,7 +148,7 @@ fn main() {
                             cell.x + 1,
                             cell.y / 2 - 1 + (SIZE + 2 * SIZE * rotation_index).cast_i32(),
                         ),
-                        (&BufferStorage, &next_radiance),
+                        (&merge_storage, &next_radiance),
                     )
                 } else {
                     merge_1_odd::<SingleF32, _>(
@@ -150,7 +157,7 @@ fn main() {
                             cell.x + 1,
                             cell.y / 2 + (2 * SIZE * rotation_index).cast_i32(),
                         ),
-                        (&BufferStorage, &next_radiance),
+                        (&merge_storage, &next_radiance),
                     )
                 }
             };
@@ -178,7 +185,7 @@ fn main() {
         for i in 0..num_cascades + 1 {
             let grid = Grid::new(Vec2::new(SIZE >> i, SEGMENTS * SIZE), 2 << i);
             if i < 2 {
-                tracer.cache_level(grid, &cache_pyramid[i], &light_pos);
+                tracer.cache_level(grid, &ray_storage, &cache_pyramid[i], &light_pos);
             } else {
                 merge_up_kernel.dispatch(
                     [grid.size.x, grid.size.y, grid.directions + 1],
