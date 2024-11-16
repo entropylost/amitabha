@@ -1,8 +1,7 @@
 use std::marker::PhantomData;
 use std::mem::swap;
-use std::time::Instant;
 
-use amitabha::color::{Fluence, SingleF32};
+use amitabha::color::{Fluence, MergeFluence, RgbF16};
 use amitabha::storage::BufferStorage;
 use amitabha::trace::{
     merge_up, AnalyticCursorTracer, Circle, SegmentedWorldMapper, StorageTracer, WorldSegment,
@@ -17,6 +16,8 @@ const DISPLAY_SIZE: u32 = 512;
 const SIZE: u32 = DISPLAY_SIZE / 2;
 const SEGMENTS: u32 = 4 * 2;
 
+type F = RgbF16;
+
 fn main() {
     let num_cascades = SIZE.trailing_zeros() as usize;
     let mut light_pos = Vec2::new(256.0, 256.0);
@@ -28,20 +29,22 @@ fn main() {
         .agx()
         .init();
 
-    let mut buffer_a = DEVICE.create_buffer::<f32>((SEGMENTS * SIZE * SIZE * 2) as usize);
-    let mut buffer_b = DEVICE.create_buffer::<f32>((SEGMENTS * SIZE * SIZE * 2) as usize);
+    let mut buffer_a = DEVICE
+        .create_buffer::<<F as MergeFluence>::Radiance>((SEGMENTS * SIZE * SIZE * 2) as usize);
+    let mut buffer_b = DEVICE
+        .create_buffer::<<F as MergeFluence>::Radiance>((SEGMENTS * SIZE * SIZE * 2) as usize);
 
-    let tracer = AnalyticCursorTracer::<SingleF32> {
+    let tracer = AnalyticCursorTracer::<F> {
         circles: vec![
             Circle {
                 center: Vec2::new(0.0, 0.0),
                 radius: 10.0,
-                color: 10.0,
+                color: Vec3::splat(f16::from_f32_const(10.0)),
             },
             Circle {
                 center: Vec2::new(200.0, 150.0),
                 radius: 10.0,
-                color: 0.0,
+                color: Vec3::splat(f16::from_f32_const(0.0)),
             },
         ],
     };
@@ -64,9 +67,10 @@ fn main() {
     let tracer = SegmentedWorldMapper {
         tracer,
         segments: DEVICE.create_buffer_from_slice(&segments),
-        _marker: PhantomData::<SingleF32>,
+        _marker: PhantomData::<F>,
     };
 
+    let store_axes = [Axis::CellY, Axis::Direction, Axis::CellX];
     let up_axes = [Axis::CellY, Axis::Direction, Axis::CellX];
     let axes = [Axis::CellY, Axis::Direction, Axis::CellX];
 
@@ -75,36 +79,46 @@ fn main() {
 
     let cache_pyramid = (0..num_cascades + 1)
         .map(|i| {
-            DEVICE.create_buffer::<Fluence<SingleF32>>(
+            DEVICE.create_buffer::<Fluence<F>>(
                 ((SIZE >> i) * SEGMENTS * SIZE * ((2 << i) + 1)) as usize,
             )
         })
         .collect::<Vec<_>>();
 
-    let merge_up_kernel = DEVICE
-        .create_kernel::<fn(Grid, Buffer<Fluence<SingleF32>>, Buffer<Fluence<SingleF32>>)>(
-            &track!(|grid, last_buffer, buffer| {
-                set_block_size([32, 2, 2]);
-                let (cell, dir) = Axis::dispatch_id(up_axes);
-                let cell = cell.cast_i32();
-                let probe = Probe::expr(cell, dir);
-                let fluence = merge_up(&ray_storage, &last_buffer, grid, probe);
-                ray_storage.store(&buffer, grid, probe, fluence);
-            }),
-        );
+    let store_level_kernel = DEVICE.create_kernel::<fn(Grid, Buffer<Fluence<F>>, Vec2<f32>)>(
+        &track!(|grid, buffer, light_pos| {
+            set_block_size([32, 2, 2]);
+            let (cell, dir) = Axis::dispatch_id(store_axes);
+            let cell = cell.cast_i32();
+            let probe = Probe::expr(cell, dir);
+            let fluence = tracer.compute_ray(grid, probe, &light_pos);
+            ray_storage.store(&buffer, grid, probe, fluence);
+        }),
+    );
+
+    let merge_up_kernel = DEVICE.create_kernel::<fn(Grid, Buffer<Fluence<F>>, Buffer<Fluence<F>>)>(
+        &track!(|grid, last_buffer, buffer| {
+            set_block_size([32, 2, 2]);
+            let (cell, dir) = Axis::dispatch_id(up_axes);
+            let cell = cell.cast_i32();
+            let probe = Probe::expr(cell, dir);
+            let fluence = merge_up(&ray_storage, &last_buffer, grid, probe);
+            ray_storage.store(&buffer, grid, probe, fluence);
+        }),
+    );
 
     let settings = MergeKernelSettings {
         axes,
         block_size: [32, 2, 2],
         storage: &merge_storage,
         tracer: &ray_storage,
-        _marker: PhantomData::<SingleF32>,
+        _marker: PhantomData::<F>,
     };
 
     let kernel = settings.build_kernel();
 
-    let draw = DEVICE.create_kernel::<fn(Vec2<f32>, u32, Buffer<f32>)>(&track!(
-        |rotation, rotation_index, next_radiance| {
+    let draw = DEVICE.create_kernel::<fn(Vec2<f32>, u32, Buffer<<F as MergeFluence>::Radiance>)>(
+        &track!(|rotation, rotation_index, next_radiance| {
             let cell = dispatch_id().xy();
             let cell = cell.cast_f32() - Vec2::splat(DISPLAY_SIZE as f32 / 2.0);
             let cell = Vec2::expr(
@@ -120,54 +134,36 @@ fn main() {
 
             // TODO: Divide by 2 is bad.
             let radiance = if cell.x % 2 == 0 {
-                if cell.y % 2 == 0 {
-                    merge_1_even::<SingleF32, _>(
-                        grid,
-                        Vec2::expr(
-                            cell.x + 1,
-                            cell.y / 2 + (2 * SIZE * rotation_index).cast_i32(),
-                        ),
-                        (&merge_storage, &next_radiance),
-                    )
+                let offset = if cell.y % 2 == 0 {
+                    (2 * SIZE * rotation_index).cast_i32()
                 } else {
-                    merge_1_even::<SingleF32, _>(
-                        grid,
-                        Vec2::expr(
-                            cell.x + 1,
-                            cell.y / 2 + (SIZE + 2 * SIZE * rotation_index).cast_i32(),
-                        ),
-                        (&merge_storage, &next_radiance),
-                    )
-                }
+                    (SIZE + 2 * SIZE * rotation_index).cast_i32()
+                };
+                merge_1_even::<F, _>(
+                    grid,
+                    Vec2::expr(cell.x + 1, cell.y / 2 + offset),
+                    (&merge_storage, &next_radiance),
+                )
             } else {
-                if cell.y % 2 == 0 {
-                    // Need to collect from odd cells.
-                    merge_1_odd::<SingleF32, _>(
-                        grid,
-                        Vec2::expr(
-                            cell.x + 1,
-                            cell.y / 2 - 1 + (SIZE + 2 * SIZE * rotation_index).cast_i32(),
-                        ),
-                        (&merge_storage, &next_radiance),
-                    )
+                let offset = if cell.y % 2 == 0 {
+                    -1 + (SIZE + 2 * SIZE * rotation_index).cast_i32()
                 } else {
-                    merge_1_odd::<SingleF32, _>(
-                        grid,
-                        Vec2::expr(
-                            cell.x + 1,
-                            cell.y / 2 + (2 * SIZE * rotation_index).cast_i32(),
-                        ),
-                        (&merge_storage, &next_radiance),
-                    )
-                }
+                    (2 * SIZE * rotation_index).cast_i32()
+                };
+                // Need to collect from odd cells.
+                merge_1_odd::<F, _>(
+                    grid,
+                    Vec2::expr(cell.x + 1, cell.y / 2 + offset),
+                    (&merge_storage, &next_radiance),
+                )
             };
 
             app.display().write(
                 dispatch_id().xy(),
-                app.display().read(dispatch_id().xy()) + Vec3::splat_expr(radiance),
+                app.display().read(dispatch_id().xy()) + radiance.cast_f32(),
             );
-        }
-    ));
+        }),
+    );
 
     let apply_noise = DEVICE.create_kernel::<fn()>(&track!(|| {
         let noise = pcgf(dispatch_id().x + (dispatch_id().y << 16));
@@ -185,25 +181,34 @@ fn main() {
         if rt.pressed_button(MouseButton::Left) {
             light_pos = rt.cursor_position;
         }
-        for i in 0..num_cascades + 1 {
-            let grid = Grid::new(Vec2::new(SIZE >> i, SEGMENTS * SIZE), 2 << i);
-            if i < 2 {
-                tracer.cache_level(grid, &ray_storage, &cache_pyramid[i], &light_pos);
-            } else {
-                let timings = merge_up_kernel
-                    .dispatch_async(
-                        Axis::dispatch_size(up_axes, Grid::new(grid.size, grid.directions + 1)),
+        let merge_up_commands = (0..num_cascades + 1)
+            .map(|i| {
+                let grid = Grid::new(Vec2::new(SIZE >> i, SEGMENTS * SIZE), 2 << i);
+                let dispatch_grid = Grid::new(grid.size, grid.directions + 1);
+                if i < 2 {
+                    store_level_kernel.dispatch_async(
+                        Axis::dispatch_size(store_axes, dispatch_grid),
+                        &grid,
+                        &cache_pyramid[i],
+                        &light_pos,
+                    )
+                } else {
+                    merge_up_kernel.dispatch_async(
+                        Axis::dispatch_size(up_axes, dispatch_grid),
                         &grid,
                         &cache_pyramid[i - 1],
                         &cache_pyramid[i],
                     )
-                    .execute_timed();
-                let time = timings[0].1;
-                merge_up_timings[i].push(time as f64);
-            }
+                }
+                .debug(format!("merge-up-{}", i))
+            })
+            .collect::<Vec<_>>()
+            .chain();
+        let timings = merge_up_commands.execute_timed();
+        for (name, time) in timings.iter() {
+            let i = name.split('-').last().unwrap().parse::<usize>().unwrap();
+            merge_up_timings[i].push(*time as f64);
         }
-
-        let start = Instant::now();
 
         let merge_commands = (0..num_cascades)
             .rev()
@@ -231,11 +236,6 @@ fn main() {
             merge_timings[i].push(*time as f64);
         }
 
-        let elapsed = start.elapsed();
-        if rt.tick % 100 == 0 {
-            println!("Elapsed: {:?}", elapsed);
-        }
-
         for (i, r) in rotations.iter().enumerate() {
             draw.dispatch(
                 [DISPLAY_SIZE, DISPLAY_SIZE, 1],
@@ -244,31 +244,32 @@ fn main() {
                 &buffer_a,
             );
         }
-        apply_noise.dispatch([DISPLAY_SIZE, DISPLAY_SIZE, 1]);
+        // apply_noise.dispatch([DISPLAY_SIZE, DISPLAY_SIZE, 1]);
 
-        if rt.tick % 100 == 0 {
-            // println!("Merge Timings:");
-            // let mut total = 0.0;
-            // let mut total_variance = 0.0;
-            // for (i, timings) in merge_timings.iter_mut().enumerate() {
-            //     let avg = timings.iter().sum::<f64>() / 100.0;
-            //     total += avg;
-            //     let variance = timings.iter().map(|t| (t - avg).powi(2)).sum::<f64>() / 100.0;
-            //     total_variance += variance;
-            //     println!("    {}: {:.2}ms, sd {:.3}ms", i, avg, variance.sqrt());
-            //     timings.clear();
-            // }
-            // println!("Total: {:.3}ms, sd {:.3}ms", total, total_variance.sqrt());
+        if rt.tick % 200 == 0 {
+            let c = 200.0;
+            println!("Merge Timings:");
+            let mut total = 0.0;
+            let mut total_variance = 0.0;
+            for (i, timings) in merge_timings.iter_mut().enumerate() {
+                let avg = timings.iter().sum::<f64>() / c;
+                total += avg;
+                let variance = timings.iter().map(|t| (t - avg).powi(2)).sum::<f64>() / c;
+                total_variance += variance;
+                // println!("    {}: {:.2}ms, sd {:.3}ms", i, avg, variance.sqrt());
+                timings.clear();
+            }
+            println!("Total: {:.3}ms, sd {:.3}ms", total, total_variance.sqrt());
 
             println!("Merge Up Timings:");
             let mut total = 0.0;
             let mut total_variance = 0.0;
             for (i, timings) in merge_up_timings.iter_mut().enumerate() {
-                let avg = timings.iter().sum::<f64>() / 100.0;
+                let avg = timings.iter().sum::<f64>() / c;
                 total += avg;
-                let variance = timings.iter().map(|t| (t - avg).powi(2)).sum::<f64>() / 100.0;
+                let variance = timings.iter().map(|t| (t - avg).powi(2)).sum::<f64>() / c;
                 total_variance += variance;
-                println!("    {}: {:.2}ms, sd {:.3}ms", i, avg, variance.sqrt());
+                // println!("    {}: {:.2}ms, sd {:.3}ms", i, avg, variance.sqrt());
                 timings.clear();
             }
             println!("Total: {:.3}ms, sd {:.3}ms", total, total_variance.sqrt());

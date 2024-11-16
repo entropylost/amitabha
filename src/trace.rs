@@ -2,7 +2,7 @@ use std::marker::PhantomData;
 
 use keter::lang::types::vector::Vec2;
 use keter::prelude::*;
-use keter::runtime::{AsKernelArg, KernelParameter};
+use keter::runtime::KernelParameter;
 
 use crate::color::{Fluence, MergeFluence, PartialTransmittance, Radiance};
 use crate::{Axis, Grid, Probe};
@@ -89,33 +89,21 @@ impl<F: MergeFluence, T> SegmentedWorldMapper<F, T> {
     }
 }
 impl<F: MergeFluence, T: WorldTracer<F>> SegmentedWorldMapper<F, T> {
-    pub fn cache_level(
+    #[tracked]
+    pub fn compute_ray(
         &self,
-        grid: Grid,
-        storage: &StorageTracer,
-        buffer: &Buffer<Fluence<F>>,
-        args: &impl AsKernelArg<Output = <T::Params as KernelParameter>::Arg>,
-    ) {
-        assert!(buffer.len() as u32 >= grid.size.x * grid.size.y * (grid.directions + 1));
-        let kernel = DEVICE.create_kernel::<fn(<T::Params as KernelParameter>::Arg)>(&track!(
-            |tracer_params| {
-                let grid = grid.expr();
-                let cell = dispatch_id().xy();
-                let segment = cell.y / (grid.size.y / self.segments.len() as u32);
-                let segment = self.segments.read(segment);
-                let cell = cell.cast_i32();
-                let dir = dispatch_id().z;
-                let start = self.to_world(grid, cell, segment);
-                let end_cell = cell + Vec2::expr(1, grid.lower_offset(dir));
-                let end = self.to_world(grid, end_cell, segment);
-                let fluence = self
-                    .tracer
-                    .trace(&tracer_params, start, end)
-                    .opaque_if(!self.contains(grid, end_cell, segment));
-                storage.store(&buffer.var(), grid, Probe::expr(cell, dir), fluence);
-            }
-        ));
-        kernel.dispatch([grid.size.x, grid.size.y, grid.directions + 1], args);
+        grid: Expr<Grid>,
+        probe: Expr<Probe>,
+        tracer_params: &T::Params,
+    ) -> Expr<Fluence<F>> {
+        let segment = probe.cell.y.cast_u32() / (grid.size.y / self.segments.len() as u32);
+        let segment = self.segments.read(segment);
+        let start = self.to_world(grid, probe.cell, segment);
+        let end_cell = probe.cell + Vec2::expr(1, grid.ray_offset(probe.dir));
+        let end = self.to_world(grid, end_cell, segment);
+        self.tracer
+            .trace(tracer_params, start, end)
+            .opaque_if(!self.contains(grid, end_cell, segment))
     }
 }
 

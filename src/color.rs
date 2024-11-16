@@ -151,6 +151,35 @@ impl Radiance for Vec3<f32> {
         Vec3::splat(1.0)
     }
 }
+impl Radiance for Vec3<f16> {
+    #[tracked]
+    fn merge(a: Expr<Self>, b: Expr<Self>) -> Expr<Self> {
+        a + b
+    }
+    #[tracked]
+    fn blend(a: Expr<Self>, b: Expr<Self>) -> Expr<Self> {
+        (a + b) * f16::from_f32_const(0.5)
+    }
+    #[tracked]
+    fn blend_n(v: &[Expr<Self>]) -> Expr<Self> {
+        let sum = v
+            .iter()
+            .fold(Vec3::splat_expr(f16::ZERO), |sum, &x| sum + x);
+        sum * f16::from_f32(1.0 / v.len() as f32)
+    }
+    #[tracked]
+    fn scale(this: Expr<Self>, scale: Expr<f32>) -> Expr<Self> {
+        this * scale.cast_f16()
+    }
+    #[tracked]
+    fn black() -> Self {
+        Vec3::splat(f16::ZERO)
+    }
+
+    fn debug_white() -> Self {
+        Vec3::splat(f16::ONE)
+    }
+}
 
 pub trait PartialTransmittance: Transmittance {
     fn blend(a: Expr<Self>, b: Expr<Self>) -> Expr<Self>;
@@ -186,6 +215,102 @@ impl PartialTransmittance for f32 {
     fn blend_n(v: &[Expr<Self>]) -> Expr<Self> {
         let sum = v.iter().fold(0.0.expr(), |sum, &x| sum + x);
         sum * (1.0 / v.len() as f32)
+    }
+}
+impl Transmittance for Vec3<f32> {
+    fn transparent() -> Self {
+        Vec3::splat(1.0)
+    }
+    fn opaque() -> Self {
+        Vec3::splat(0.0)
+    }
+}
+impl PartialTransmittance for Vec3<f32> {
+    #[tracked]
+    fn blend(a: Expr<Self>, b: Expr<Self>) -> Expr<Self> {
+        (a + b) * 0.5
+    }
+    #[tracked]
+    fn blend_n(v: &[Expr<Self>]) -> Expr<Self> {
+        let sum = v
+            .iter()
+            .fold(Vec3::splat(0.0_f32).expr(), |sum, &x| sum + x);
+        sum * (1.0 / v.len() as f32)
+    }
+}
+impl Transmittance for Vec3<f16> {
+    fn transparent() -> Self {
+        Vec3::splat(f16::ONE)
+    }
+    fn opaque() -> Self {
+        Vec3::splat(f16::ZERO)
+    }
+}
+impl PartialTransmittance for Vec3<f16> {
+    #[tracked]
+    fn blend(a: Expr<Self>, b: Expr<Self>) -> Expr<Self> {
+        (a + b) * f16::from_f32_const(0.5)
+    }
+    #[tracked]
+    fn blend_n(v: &[Expr<Self>]) -> Expr<Self> {
+        let sum = v
+            .iter()
+            .fold(Vec3::splat(f16::ZERO).expr(), |sum, &x| sum + x);
+        sum * f16::from_f32(1.0 / v.len() as f32)
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct RgbF32T1;
+impl MergeFluence for RgbF32T1 {
+    type Radiance = Vec3<f32>;
+    type Transmittance = f32;
+    #[tracked]
+    fn over(near: Expr<Fluence<Self>>, far: Expr<Fluence<Self>>) -> Expr<Fluence<Self>> {
+        Fluence::expr(
+            near.transmittance * far.radiance + near.radiance,
+            near.transmittance * far.transmittance,
+        )
+    }
+    #[tracked]
+    fn over_radiance(near: Expr<Fluence<Self>>, far: Expr<Self::Radiance>) -> Expr<Self::Radiance> {
+        near.transmittance * far + near.radiance
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct RgbF16;
+impl MergeFluence for RgbF16 {
+    type Radiance = Vec3<f16>;
+    type Transmittance = Vec3<f16>;
+    #[tracked]
+    fn over(near: Expr<Fluence<Self>>, far: Expr<Fluence<Self>>) -> Expr<Fluence<Self>> {
+        Fluence::expr(
+            near.transmittance * far.radiance + near.radiance,
+            near.transmittance * far.transmittance,
+        )
+    }
+    #[tracked]
+    fn over_radiance(near: Expr<Fluence<Self>>, far: Expr<Self::Radiance>) -> Expr<Self::Radiance> {
+        near.transmittance * far + near.radiance
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct RgbF32;
+impl MergeFluence for RgbF32 {
+    type Radiance = Vec3<f32>;
+    type Transmittance = Vec3<f32>;
+    #[tracked]
+    fn over(near: Expr<Fluence<Self>>, far: Expr<Fluence<Self>>) -> Expr<Fluence<Self>> {
+        Fluence::expr(
+            near.transmittance * far.radiance + near.radiance,
+            near.transmittance * far.transmittance,
+        )
+    }
+    #[tracked]
+    fn over_radiance(near: Expr<Fluence<Self>>, far: Expr<Self::Radiance>) -> Expr<Self::Radiance> {
+        near.transmittance * far + near.radiance
     }
 }
 
