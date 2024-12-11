@@ -4,10 +4,10 @@ use keter::lang::types::vector::Vec2;
 use keter::prelude::*;
 use keter::runtime::KernelParameter;
 
-use crate::color::{Fluence, MergeFluence, PartialTransmittance, Radiance};
+use crate::fluence::{Fluence, FluenceType, PartialTransmittance, Radiance};
 use crate::{Axis, Grid, Probe};
 
-pub trait Tracer<F: MergeFluence> {
+pub trait Tracer<F: FluenceType> {
     type Params: KernelParameter;
     /// Traces the upper and lower frustrums for a given probe.
     /// TODO: Fill this in
@@ -22,7 +22,7 @@ pub trait Tracer<F: MergeFluence> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct NullTracer;
 
-impl<F: MergeFluence> Tracer<F> for NullTracer {
+impl<F: FluenceType> Tracer<F> for NullTracer {
     type Params = ();
     fn trace(
         &self,
@@ -34,7 +34,7 @@ impl<F: MergeFluence> Tracer<F> for NullTracer {
     }
 }
 
-pub trait WorldTracer<F: MergeFluence> {
+pub trait WorldTracer<F: FluenceType> {
     type Params: KernelParameter;
 
     fn trace(
@@ -55,12 +55,12 @@ pub struct WorldSegment {
     pub offset: u32,
 }
 
-pub struct SegmentedWorldMapper<F: MergeFluence, T> {
+pub struct SegmentedWorldMapper<F: FluenceType, T> {
     pub tracer: T,
     pub segments: Buffer<WorldSegment>,
     pub _marker: PhantomData<F>,
 }
-impl<F: MergeFluence, T> SegmentedWorldMapper<F, T> {
+impl<F: FluenceType, T> SegmentedWorldMapper<F, T> {
     #[tracked]
     pub fn to_world(
         &self,
@@ -88,7 +88,7 @@ impl<F: MergeFluence, T> SegmentedWorldMapper<F, T> {
         (cell.y - segment.offset.cast_i32()).cast_u32() < grid.size.y / self.segments.len() as u32
     }
 }
-impl<F: MergeFluence, T: WorldTracer<F>> SegmentedWorldMapper<F, T> {
+impl<F: FluenceType, T: WorldTracer<F>> SegmentedWorldMapper<F, T> {
     #[tracked]
     pub fn compute_ray(
         &self,
@@ -101,13 +101,14 @@ impl<F: MergeFluence, T: WorldTracer<F>> SegmentedWorldMapper<F, T> {
         let start = self.to_world(grid, probe.cell, segment);
         let end_cell = probe.cell + Vec2::expr(1, grid.ray_offset(probe.dir));
         let end = self.to_world(grid, end_cell, segment);
+        // TODO: There's a weird bug with the edges that's probably a result of this going over?
         self.tracer
             .trace(tracer_params, start, end)
             .opaque_if(!self.contains(grid, end_cell, segment))
     }
 }
 
-impl<F: MergeFluence, T: WorldTracer<F>> Tracer<F> for SegmentedWorldMapper<F, T> {
+impl<F: FluenceType, T: WorldTracer<F>> Tracer<F> for SegmentedWorldMapper<F, T> {
     type Params = T::Params;
     #[tracked]
     fn trace(
@@ -146,14 +147,14 @@ impl<F: MergeFluence, T: WorldTracer<F>> Tracer<F> for SegmentedWorldMapper<F, T
     }
 }
 
-pub struct WorldMapper<F: MergeFluence, T> {
+pub struct WorldMapper<F: FluenceType, T> {
     pub tracer: T,
     pub rotation: Vec2<f32>,
     pub world_origin: Vec2<f32>,
     pub world_size: Vec2<f32>,
     pub _marker: PhantomData<F>,
 }
-impl<F: MergeFluence, T> WorldMapper<F, T> {
+impl<F: FluenceType, T> WorldMapper<F, T> {
     #[tracked]
     pub fn to_world(&self, grid: Expr<Grid>, cell: Expr<Vec2<i32>>) -> Expr<Vec2<f32>> {
         let pos_norm = cell.cast_f32() / grid.size.cast_f32() - 0.5;
@@ -165,7 +166,7 @@ impl<F: MergeFluence, T> WorldMapper<F, T> {
     }
 }
 
-impl<F: MergeFluence, T: WorldTracer<F>> Tracer<F> for WorldMapper<F, T> {
+impl<F: FluenceType, T: WorldTracer<F>> Tracer<F> for WorldMapper<F, T> {
     type Params = T::Params;
     #[tracked]
     fn trace(
@@ -236,12 +237,17 @@ fn intersect_circle(
     }
 }
 
+// #[derive(Debug, Clone, PartialEq)]
+// pub struct VoxelTracer<F: FluenceType> {
+//     pub buffer: Buffer<
+// }
+
 #[derive(Debug, Clone, PartialEq)]
-pub struct AnalyticTracer<F: MergeFluence> {
+pub struct AnalyticTracer<F: FluenceType> {
     pub circles: Vec<Circle<F::Radiance>>,
 }
 
-impl<F: MergeFluence> WorldTracer<F> for AnalyticTracer<F> {
+impl<F: FluenceType> WorldTracer<F> for AnalyticTracer<F> {
     type Params = ();
     #[tracked]
     fn trace(
@@ -279,11 +285,11 @@ impl<F: MergeFluence> WorldTracer<F> for AnalyticTracer<F> {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct AnalyticCursorTracer<F: MergeFluence> {
+pub struct AnalyticCursorTracer<F: FluenceType> {
     pub circles: Vec<Circle<F::Radiance>>,
 }
 
-impl<F: MergeFluence> WorldTracer<F> for AnalyticCursorTracer<F> {
+impl<F: FluenceType> WorldTracer<F> for AnalyticCursorTracer<F> {
     type Params = Expr<Vec2<f32>>;
     #[tracked]
     fn trace(
@@ -331,7 +337,7 @@ pub struct StorageTracer {
 }
 impl StorageTracer {
     #[tracked]
-    pub fn load<F: MergeFluence>(
+    pub fn load<F: FluenceType>(
         &self,
         buffer: &BufferVar<Fluence<F>>,
         grid: Expr<Grid>,
@@ -345,7 +351,7 @@ impl StorageTracer {
         ))
     }
     #[tracked]
-    pub fn load_opt<F: MergeFluence>(
+    pub fn load_opt<F: FluenceType>(
         &self,
 
         buffer: &BufferVar<Fluence<F>>,
@@ -364,7 +370,7 @@ impl StorageTracer {
         }
     }
     #[tracked]
-    pub fn store<F: MergeFluence>(
+    pub fn store<F: FluenceType>(
         &self,
         buffer: &BufferVar<Fluence<F>>,
         grid: Expr<Grid>,
@@ -383,7 +389,7 @@ impl StorageTracer {
     }
 }
 
-impl<F: MergeFluence> Tracer<F> for StorageTracer {
+impl<F: FluenceType> Tracer<F> for StorageTracer {
     type Params = (BufferVar<Fluence<F>>, BufferVar<Fluence<F>>, Expr<f32>);
     #[tracked]
     fn trace(
@@ -421,7 +427,7 @@ impl<F: MergeFluence> Tracer<F> for StorageTracer {
 
 // TODO: try to prevent integer division / multiplication
 #[tracked]
-pub fn merge_up<F: MergeFluence>(
+pub fn merge_up<F: FluenceType>(
     storage: &StorageTracer,
     last_buffer: &BufferVar<Fluence<F>>,
     grid: Expr<Grid>,

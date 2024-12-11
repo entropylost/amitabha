@@ -1,13 +1,13 @@
 use std::marker::PhantomData;
 use std::mem::swap;
 
-use amitabha::color::{Fluence, MergeFluence, RgbF16};
+use amitabha::fluence::{Fluence, FluenceType, RgbF16};
 use amitabha::storage::BufferStorage;
 use amitabha::trace::{
     merge_up, AnalyticCursorTracer, Circle, SegmentedWorldMapper, StorageTracer, WorldSegment,
 };
 use amitabha::utils::pcgf;
-use amitabha::{merge_1_even, merge_1_odd, Axis, Grid, MergeKernelSettings, Probe};
+use amitabha::{merge_0_even, merge_0_odd, Axis, Grid, MergeKernelSettings, Probe};
 use keter::lang::types::vector::{Vec2, Vec3};
 use keter::prelude::*;
 use keter_testbed::{App, MouseButton};
@@ -29,10 +29,10 @@ fn main() {
         .agx()
         .init();
 
-    let mut buffer_a = DEVICE
-        .create_buffer::<<F as MergeFluence>::Radiance>((SEGMENTS * SIZE * SIZE * 2) as usize);
-    let mut buffer_b = DEVICE
-        .create_buffer::<<F as MergeFluence>::Radiance>((SEGMENTS * SIZE * SIZE * 2) as usize);
+    let mut buffer_a =
+        DEVICE.create_buffer::<<F as FluenceType>::Radiance>((SEGMENTS * SIZE * SIZE * 2) as usize);
+    let mut buffer_b =
+        DEVICE.create_buffer::<<F as FluenceType>::Radiance>((SEGMENTS * SIZE * SIZE * 2) as usize);
 
     let tracer = AnalyticCursorTracer::<F> {
         circles: vec![
@@ -117,7 +117,7 @@ fn main() {
 
     let kernel = settings.build_kernel();
 
-    let draw = DEVICE.create_kernel::<fn(Vec2<f32>, u32, Buffer<<F as MergeFluence>::Radiance>)>(
+    let draw = DEVICE.create_kernel::<fn(Vec2<f32>, u32, Buffer<<F as FluenceType>::Radiance>)>(
         &track!(|rotation, rotation_index, next_radiance| {
             let cell = dispatch_id().xy();
             let cell = cell.cast_f32() - Vec2::splat(DISPLAY_SIZE as f32 / 2.0);
@@ -139,7 +139,7 @@ fn main() {
                 } else {
                     (SIZE + 2 * SIZE * rotation_index).cast_i32()
                 };
-                merge_1_even::<F, _>(
+                merge_0_even::<F, _>(
                     grid,
                     Vec2::expr(cell.x + 1, cell.y / 2 + offset),
                     (&merge_storage, &next_radiance),
@@ -151,7 +151,7 @@ fn main() {
                     (2 * SIZE * rotation_index).cast_i32()
                 };
                 // Need to collect from odd cells.
-                merge_1_odd::<F, _>(
+                merge_0_odd::<F, _>(
                     grid,
                     Vec2::expr(cell.x + 1, cell.y / 2 + offset),
                     (&merge_storage, &next_radiance),
@@ -246,8 +246,8 @@ fn main() {
         }
         // apply_noise.dispatch([DISPLAY_SIZE, DISPLAY_SIZE, 1]);
 
-        if rt.tick % 200 == 0 {
-            let c = 200.0;
+        if rt.tick % 1000 == 0 {
+            let c = 1000.0;
             println!("Merge Timings:");
             let mut total = 0.0;
             let mut total_variance = 0.0;
@@ -256,7 +256,7 @@ fn main() {
                 total += avg;
                 let variance = timings.iter().map(|t| (t - avg).powi(2)).sum::<f64>() / c;
                 total_variance += variance;
-                // println!("    {}: {:.2}ms, sd {:.3}ms", i, avg, variance.sqrt());
+                println!("    {}: {:.2}ms, sd {:.3}ms", i, avg, variance.sqrt());
                 timings.clear();
             }
             println!("Total: {:.3}ms, sd {:.3}ms", total, total_variance.sqrt());
@@ -269,7 +269,7 @@ fn main() {
                 total += avg;
                 let variance = timings.iter().map(|t| (t - avg).powi(2)).sum::<f64>() / c;
                 total_variance += variance;
-                // println!("    {}: {:.2}ms, sd {:.3}ms", i, avg, variance.sqrt());
+                println!("    {}: {:.2}ms, sd {:.3}ms", i, avg, variance.sqrt());
                 timings.clear();
             }
             println!("Total: {:.3}ms, sd {:.3}ms", total, total_variance.sqrt());

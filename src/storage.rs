@@ -1,7 +1,7 @@
 use keter::prelude::*;
 use keter::runtime::KernelParameter;
 
-use crate::color::Radiance;
+use crate::fluence::Radiance;
 use crate::{Axis, Grid, Probe};
 
 // Note: Integer Multiplication is multiple instructions on compute capacity <= 6.2 (10-series and less).

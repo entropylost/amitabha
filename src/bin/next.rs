@@ -1,7 +1,7 @@
 use std::marker::PhantomData;
 use std::mem::swap;
 
-use amitabha::color::BinaryF32;
+use amitabha::fluence::BinaryF32;
 use amitabha::storage::{BufferStorage, RadianceStorage};
 use amitabha::trace::{AnalyticCursorTracer, Circle, WorldMapper};
 use amitabha::{Axis, Grid, MergeKernelSettings, Probe};

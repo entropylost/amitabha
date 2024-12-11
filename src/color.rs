@@ -1,351 +1,150 @@
-use std::f32::consts::TAU;
-
 use keter::lang::types::vector::Vec3;
 use keter::prelude::*;
 
+use crate::fluence::{self, Fluence, FluenceType};
+
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Value)]
-pub struct Fluence<F: MergeFluence> {
-    pub radiance: F::Radiance,
-    pub transmittance: F::Transmittance,
+pub struct Color<C: ColorType> {
+    pub emission: C::Emission,
+    pub opacity: C::Opacity,
 }
-impl<F: MergeFluence> Fluence<F> {
-    #[tracked]
-    pub fn expr(radiance: Expr<F::Radiance>, transmittance: Expr<F::Transmittance>) -> Expr<Self> {
-        Fluence::from_comps_expr(FluenceComps {
-            radiance,
-            transmittance,
-        })
-    }
-    pub fn empty() -> Self {
-        Fluence {
-            radiance: F::Radiance::black(),
-            transmittance: F::Transmittance::transparent(),
-        }
-    }
-    pub fn solid(radiance: F::Radiance) -> Self {
-        Fluence {
-            radiance,
-            transmittance: F::Transmittance::opaque(),
-        }
-    }
-    #[tracked]
-    pub fn solid_expr(radiance: Expr<F::Radiance>) -> Expr<Self> {
-        Fluence::expr(radiance, F::Transmittance::opaque().expr())
-    }
-}
-impl<F: MergeFluence> FluenceExpr<F> {
-    #[tracked]
-    pub fn restrict_angle(self, angle: Expr<f32>) -> Expr<Fluence<F>> {
-        Fluence::expr(
-            F::Radiance::restrict_angle(self.radiance, angle),
-            self.transmittance,
-        )
-    }
-    #[tracked]
-    pub fn opaque_if(self, x: Expr<bool>) -> Expr<Fluence<F>> {
-        Fluence::expr(
-            self.radiance,
-            if x {
-                F::Transmittance::opaque().expr()
-            } else {
-                self.transmittance
-            },
-        )
-    }
-}
-impl<F: MergeFluence> Fluence<F>
-where
-    F::Transmittance: PartialTransmittance,
-{
-    #[tracked]
-    pub fn blend(a: Expr<Self>, b: Expr<Self>) -> Expr<Self> {
-        Fluence::expr(
-            F::Radiance::blend(a.radiance, b.radiance),
-            F::Transmittance::blend(a.transmittance, b.transmittance),
-        )
-    }
-    #[tracked]
-    pub fn blend_n(v: &[Expr<Self>]) -> Expr<Self> {
-        Fluence::expr(
-            F::Radiance::blend_n(&v.iter().map(|x| x.radiance).collect::<Vec<_>>()),
-            F::Transmittance::blend_n(&v.iter().map(|x| x.transmittance).collect::<Vec<_>>()),
-        )
+impl<C: ColorType> ColorExpr<C> {
+    pub fn to_fluence(self, segment_length: Expr<f32>) -> Expr<Fluence<C::Fluence>> {
+        C::to_fluence(self.self_, segment_length)
     }
 }
 
-pub trait MergeFluence: 'static + Copy {
-    type Radiance: Radiance;
-    type Transmittance: Transmittance;
+pub trait ColorType: 'static + Copy {
+    type Emission: Emission;
+    type Opacity: Opacity;
+    type Fluence: FluenceType;
 
-    fn over(near: Expr<Fluence<Self>>, far: Expr<Fluence<Self>>) -> Expr<Fluence<Self>>;
-    fn over_radiance(near: Expr<Fluence<Self>>, far: Expr<Self::Radiance>) -> Expr<Self::Radiance>;
+    fn to_fluence(
+        color: Expr<Color<Self>>,
+        segment_length: Expr<f32>,
+    ) -> Expr<Fluence<Self::Fluence>>;
 }
 
-pub trait Radiance: Value {
-    // Use *0.5 instead of /2.0 since that actually matters.
-    fn merge(a: Expr<Self>, b: Expr<Self>) -> Expr<Self>;
-    fn blend(a: Expr<Self>, b: Expr<Self>) -> Expr<Self>;
-    fn blend_n(v: &[Expr<Self>]) -> Expr<Self>;
-    fn scale(this: Expr<Self>, scale: Expr<f32>) -> Expr<Self>;
-    #[tracked]
-    fn restrict_angle(this: Expr<Self>, angle: Expr<f32>) -> Expr<Self> {
-        Self::scale(this, angle / TAU)
-    }
+pub trait Emission: Value {
     fn black() -> Self;
-
-    fn debug_white() -> Self;
 }
-
-impl Radiance for f32 {
-    #[tracked]
-    fn merge(a: Expr<Self>, b: Expr<Self>) -> Expr<Self> {
-        a + b
-    }
-    #[tracked]
-    fn blend(a: Expr<Self>, b: Expr<Self>) -> Expr<Self> {
-        (a + b) * 0.5
-    }
-    #[tracked]
-    fn blend_n(v: &[Expr<Self>]) -> Expr<Self> {
-        let sum = v.iter().fold(0.0.expr(), |sum, &x| sum + x);
-        sum * (1.0 / v.len() as f32)
-    }
-    #[tracked]
-    fn scale(this: Expr<Self>, scale: Expr<f32>) -> Expr<Self> {
-        this * scale
-    }
-    #[tracked]
-    fn black() -> Self {
-        0.0
-    }
-
-    fn debug_white() -> Self {
-        1.0
-    }
-}
-impl Radiance for Vec3<f32> {
-    #[tracked]
-    fn merge(a: Expr<Self>, b: Expr<Self>) -> Expr<Self> {
-        a + b
-    }
-    #[tracked]
-    fn blend(a: Expr<Self>, b: Expr<Self>) -> Expr<Self> {
-        (a + b) * 0.5
-    }
-    #[tracked]
-    fn blend_n(v: &[Expr<Self>]) -> Expr<Self> {
-        let sum = v.iter().fold(Vec3::splat_expr(0.0_f32), |sum, &x| sum + x);
-        sum * (1.0 / v.len() as f32)
-    }
-    #[tracked]
-    fn scale(this: Expr<Self>, scale: Expr<f32>) -> Expr<Self> {
-        this * scale
-    }
-    #[tracked]
-    fn black() -> Self {
-        Vec3::splat(0.0)
-    }
-
-    fn debug_white() -> Self {
-        Vec3::splat(1.0)
-    }
-}
-impl Radiance for Vec3<f16> {
-    #[tracked]
-    fn merge(a: Expr<Self>, b: Expr<Self>) -> Expr<Self> {
-        a + b
-    }
-    #[tracked]
-    fn blend(a: Expr<Self>, b: Expr<Self>) -> Expr<Self> {
-        (a + b) * f16::from_f32_const(0.5)
-    }
-    #[tracked]
-    fn blend_n(v: &[Expr<Self>]) -> Expr<Self> {
-        let sum = v
-            .iter()
-            .fold(Vec3::splat_expr(f16::ZERO), |sum, &x| sum + x);
-        sum * f16::from_f32(1.0 / v.len() as f32)
-    }
-    #[tracked]
-    fn scale(this: Expr<Self>, scale: Expr<f32>) -> Expr<Self> {
-        this * scale.cast_f16()
-    }
-    #[tracked]
-    fn black() -> Self {
-        Vec3::splat(f16::ZERO)
-    }
-
-    fn debug_white() -> Self {
-        Vec3::splat(f16::ONE)
-    }
-}
-
-pub trait PartialTransmittance: Transmittance {
-    fn blend(a: Expr<Self>, b: Expr<Self>) -> Expr<Self>;
-    fn blend_n(v: &[Expr<Self>]) -> Expr<Self>;
-}
-
-pub trait Transmittance: Value {
+pub trait Opacity: Value {
     fn transparent() -> Self;
     fn opaque() -> Self;
 }
-impl Transmittance for bool {
-    fn transparent() -> Self {
-        true
-    }
-    fn opaque() -> Self {
-        false
-    }
-}
-impl Transmittance for f32 {
-    fn transparent() -> Self {
-        1.0
-    }
-    fn opaque() -> Self {
+
+impl Emission for f32 {
+    fn black() -> Self {
         0.0
     }
 }
-impl PartialTransmittance for f32 {
-    #[tracked]
-    fn blend(a: Expr<Self>, b: Expr<Self>) -> Expr<Self> {
-        (a + b) * 0.5
-    }
-    #[tracked]
-    fn blend_n(v: &[Expr<Self>]) -> Expr<Self> {
-        let sum = v.iter().fold(0.0.expr(), |sum, &x| sum + x);
-        sum * (1.0 / v.len() as f32)
-    }
-}
-impl Transmittance for Vec3<f32> {
-    fn transparent() -> Self {
-        Vec3::splat(1.0)
-    }
-    fn opaque() -> Self {
+impl Emission for Vec3<f32> {
+    fn black() -> Self {
         Vec3::splat(0.0)
     }
 }
-impl PartialTransmittance for Vec3<f32> {
-    #[tracked]
-    fn blend(a: Expr<Self>, b: Expr<Self>) -> Expr<Self> {
-        (a + b) * 0.5
-    }
-    #[tracked]
-    fn blend_n(v: &[Expr<Self>]) -> Expr<Self> {
-        let sum = v
-            .iter()
-            .fold(Vec3::splat(0.0_f32).expr(), |sum, &x| sum + x);
-        sum * (1.0 / v.len() as f32)
-    }
-}
-impl Transmittance for Vec3<f16> {
-    fn transparent() -> Self {
-        Vec3::splat(f16::ONE)
-    }
-    fn opaque() -> Self {
+impl Emission for Vec3<f16> {
+    fn black() -> Self {
         Vec3::splat(f16::ZERO)
     }
 }
-impl PartialTransmittance for Vec3<f16> {
-    #[tracked]
-    fn blend(a: Expr<Self>, b: Expr<Self>) -> Expr<Self> {
-        (a + b) * f16::from_f32_const(0.5)
+
+impl Opacity for f32 {
+    fn transparent() -> Self {
+        0.0
     }
-    #[tracked]
-    fn blend_n(v: &[Expr<Self>]) -> Expr<Self> {
-        let sum = v
-            .iter()
-            .fold(Vec3::splat(f16::ZERO).expr(), |sum, &x| sum + x);
-        sum * f16::from_f32(1.0 / v.len() as f32)
+    fn opaque() -> Self {
+        f32::INFINITY
     }
 }
-
-#[derive(Debug, Clone, Copy)]
-pub struct RgbF32T1;
-impl MergeFluence for RgbF32T1 {
-    type Radiance = Vec3<f32>;
-    type Transmittance = f32;
-    #[tracked]
-    fn over(near: Expr<Fluence<Self>>, far: Expr<Fluence<Self>>) -> Expr<Fluence<Self>> {
-        Fluence::expr(
-            near.transmittance * far.radiance + near.radiance,
-            near.transmittance * far.transmittance,
-        )
+impl Opacity for Vec3<f32> {
+    fn transparent() -> Self {
+        Vec3::splat(0.0)
     }
-    #[tracked]
-    fn over_radiance(near: Expr<Fluence<Self>>, far: Expr<Self::Radiance>) -> Expr<Self::Radiance> {
-        near.transmittance * far + near.radiance
+    fn opaque() -> Self {
+        Vec3::splat(f32::INFINITY)
     }
 }
-
-#[derive(Debug, Clone, Copy)]
-pub struct RgbF16;
-impl MergeFluence for RgbF16 {
-    type Radiance = Vec3<f16>;
-    type Transmittance = Vec3<f16>;
-    #[tracked]
-    fn over(near: Expr<Fluence<Self>>, far: Expr<Fluence<Self>>) -> Expr<Fluence<Self>> {
-        Fluence::expr(
-            near.transmittance * far.radiance + near.radiance,
-            near.transmittance * far.transmittance,
-        )
+impl Opacity for Vec3<f16> {
+    fn transparent() -> Self {
+        Vec3::splat(f16::ZERO)
     }
-    #[tracked]
-    fn over_radiance(near: Expr<Fluence<Self>>, far: Expr<Self::Radiance>) -> Expr<Self::Radiance> {
-        near.transmittance * far + near.radiance
+    fn opaque() -> Self {
+        Vec3::splat(f16::INFINITY)
+    }
+}
+impl Opacity for bool {
+    fn transparent() -> Self {
+        false
+    }
+    fn opaque() -> Self {
+        true
     }
 }
 
 #[derive(Debug, Clone, Copy)]
 pub struct RgbF32;
-impl MergeFluence for RgbF32 {
-    type Radiance = Vec3<f32>;
-    type Transmittance = Vec3<f32>;
+impl ColorType for RgbF32 {
+    type Emission = Vec3<f32>;
+    type Opacity = Vec3<f32>;
+    type Fluence = fluence::RgbF32;
     #[tracked]
-    fn over(near: Expr<Fluence<Self>>, far: Expr<Fluence<Self>>) -> Expr<Fluence<Self>> {
-        Fluence::expr(
-            near.transmittance * far.radiance + near.radiance,
-            near.transmittance * far.transmittance,
-        )
+    fn to_fluence(
+        color: Expr<Color<Self>>,
+        segment_length: Expr<f32>,
+    ) -> Expr<Fluence<Self::Fluence>> {
+        let transmittance = (-color.opacity * segment_length).exp();
+        Fluence::expr(color.emission * (1.0 - transmittance), transmittance)
     }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct RgbF16;
+impl ColorType for RgbF16 {
+    type Emission = Vec3<f16>;
+    type Opacity = Vec3<f16>;
+    type Fluence = fluence::RgbF16;
     #[tracked]
-    fn over_radiance(near: Expr<Fluence<Self>>, far: Expr<Self::Radiance>) -> Expr<Self::Radiance> {
-        near.transmittance * far + near.radiance
+    fn to_fluence(
+        color: Expr<Color<Self>>,
+        segment_length: Expr<f32>,
+    ) -> Expr<Fluence<Self::Fluence>> {
+        let transmittance = (-color.opacity * segment_length.cast_f16()).exp();
+        Fluence::expr(color.emission * (f16::ONE - transmittance), transmittance)
     }
 }
 
 #[derive(Debug, Clone, Copy)]
 pub struct SingleF32;
-impl MergeFluence for SingleF32 {
-    type Radiance = f32;
-    type Transmittance = f32;
+impl ColorType for SingleF32 {
+    type Emission = f32;
+    type Opacity = f32;
+    type Fluence = fluence::SingleF32;
     #[tracked]
-    fn over(near: Expr<Fluence<Self>>, far: Expr<Fluence<Self>>) -> Expr<Fluence<Self>> {
-        Fluence::expr(
-            near.transmittance * far.radiance + near.radiance,
-            near.transmittance * far.transmittance,
-        )
-    }
-    #[tracked]
-    fn over_radiance(near: Expr<Fluence<Self>>, far: Expr<Self::Radiance>) -> Expr<Self::Radiance> {
-        near.transmittance * far + near.radiance
+    fn to_fluence(
+        color: Expr<Color<Self>>,
+        segment_length: Expr<f32>,
+    ) -> Expr<Fluence<Self::Fluence>> {
+        let transmittance = (-color.opacity * segment_length).exp();
+        Fluence::expr(color.emission * (1.0 - transmittance), transmittance)
     }
 }
 
 #[derive(Debug, Clone, Copy)]
 pub struct BinaryF32;
-impl MergeFluence for BinaryF32 {
-    type Radiance = f32;
-    type Transmittance = bool;
+impl ColorType for BinaryF32 {
+    type Emission = f32;
+    type Opacity = bool;
+    type Fluence = fluence::BinaryF32;
     #[tracked]
-    fn over(near: Expr<Fluence<Self>>, far: Expr<Fluence<Self>>) -> Expr<Fluence<Self>> {
+    fn to_fluence(
+        color: Expr<Color<Self>>,
+        _segment_length: Expr<f32>,
+    ) -> Expr<Fluence<Self::Fluence>> {
         Fluence::expr(
-            near.transmittance.select(far.radiance, f32::black().expr()) + near.radiance,
-            near.transmittance && far.transmittance,
+            color.emission * color.opacity.cast_u32().cast_f32(),
+            !color.opacity,
         )
-    }
-    #[tracked]
-    fn over_radiance(near: Expr<Fluence<Self>>, far: Expr<Self::Radiance>) -> Expr<Self::Radiance> {
-        near.transmittance.select(far, near.radiance)
     }
 }

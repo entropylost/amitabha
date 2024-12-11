@@ -1,7 +1,6 @@
 #![allow(clippy::type_complexity)]
 
 // TODO: Can change u32 to use to u16?
-// TODO: Also move to i32 instead everywhere?
 
 use std::marker::PhantomData;
 
@@ -10,8 +9,9 @@ use keter::lang::types::vector::Vec2;
 use keter::prelude::*;
 use keter::runtime::{AsKernelArg, KernelParameter};
 
+pub mod fluence;
+use fluence::{Fluence, FluenceType, Radiance};
 pub mod color;
-use color::{Fluence, MergeFluence, Radiance};
 pub mod trace;
 use trace::Tracer;
 pub mod storage;
@@ -153,7 +153,7 @@ impl Axis {
 }
 
 #[derive(Debug, Clone, Copy)]
-pub struct MergeKernelSettings<'a, F: MergeFluence, T: Tracer<F>, S: RadianceStorage<F::Radiance>> {
+pub struct MergeKernelSettings<'a, F: FluenceType, T: Tracer<F>, S: RadianceStorage<F::Radiance>> {
     pub axes: [Axis; 3],
     pub block_size: [u32; 3],
     // TODO: Use boxing.
@@ -163,7 +163,7 @@ pub struct MergeKernelSettings<'a, F: MergeFluence, T: Tracer<F>, S: RadianceSto
     pub _marker: PhantomData<F>,
 }
 
-pub struct MergeKernel<F: MergeFluence, T: Tracer<F>, S: RadianceStorage<F::Radiance>> {
+pub struct MergeKernel<F: FluenceType, T: Tracer<F>, S: RadianceStorage<F::Radiance>> {
     kernel: Kernel<
         fn(
             Grid,
@@ -176,7 +176,7 @@ pub struct MergeKernel<F: MergeFluence, T: Tracer<F>, S: RadianceStorage<F::Radi
     _marker: PhantomData<F>,
 }
 
-impl<F: MergeFluence, T: Tracer<F>, S: RadianceStorage<F::Radiance>>
+impl<F: FluenceType, T: Tracer<F>, S: RadianceStorage<F::Radiance>>
     MergeKernelSettings<'_, F, T, S>
 {
     pub fn build_kernel(&self) -> MergeKernel<F, T, S> {
@@ -208,7 +208,7 @@ impl<F: MergeFluence, T: Tracer<F>, S: RadianceStorage<F::Radiance>>
         }
     }
 }
-impl<F: MergeFluence, T: Tracer<F>, S: RadianceStorage<F::Radiance>> MergeKernel<F, T, S> {
+impl<F: FluenceType, T: Tracer<F>, S: RadianceStorage<F::Radiance>> MergeKernel<F, T, S> {
     pub fn dispatch(
         &self,
         grid: Grid,
@@ -232,7 +232,7 @@ impl<F: MergeFluence, T: Tracer<F>, S: RadianceStorage<F::Radiance>> MergeKernel
 // TODO: Add tracer? Make separate Tracer1 type?
 // Merges into (cell.x, cell.y + 0.5)
 #[tracked]
-pub fn merge_1_odd<F: MergeFluence, S: RadianceStorage<F::Radiance>>(
+pub fn merge_0_odd<F: FluenceType, S: RadianceStorage<F::Radiance>>(
     grid: Expr<Grid>,
     cell: Expr<Vec2<i32>>,
     (storage, next_radiance_params): (&S, &S::Params),
@@ -261,7 +261,7 @@ pub fn merge_1_odd<F: MergeFluence, S: RadianceStorage<F::Radiance>>(
 
 // Merges into (cell.x, cell.y)
 #[tracked]
-pub fn merge_1_even<F: MergeFluence, S: RadianceStorage<F::Radiance>>(
+pub fn merge_0_even<F: FluenceType, S: RadianceStorage<F::Radiance>>(
     grid: Expr<Grid>,
     cell: Expr<Vec2<i32>>,
     (storage, next_radiance_params): (&S, &S::Params),
@@ -274,29 +274,27 @@ pub fn merge_1_even<F: MergeFluence, S: RadianceStorage<F::Radiance>>(
     let upper_dir = 1_u32.expr();
 
     let [lower, upper] = [Fluence::<F>::empty().expr(); 2];
+    let next_cell = cell + Vec2::expr(2, 0);
     F::Radiance::merge(
         F::Radiance::blend(
             load_next(Probe::expr(cell, lower_dir)),
             F::over_radiance(
                 lower,
-                load_next(Probe::expr(
-                    cell + Vec2::expr(2, 0) - Vec2::expr(0, 1),
-                    lower_dir,
-                )),
+                load_next(Probe::expr(next_cell - Vec2::expr(0, 1), lower_dir)),
             ),
         ),
         F::Radiance::blend(
             load_next(Probe::expr(cell, upper_dir)),
             F::over_radiance(
                 upper,
-                load_next(Probe::expr(cell + Vec2::expr(2, 1), upper_dir)),
+                load_next(Probe::expr(next_cell + Vec2::expr(0, 1), upper_dir)),
             ),
         ),
     )
 }
 
 #[tracked]
-pub fn merge<F: MergeFluence, S: RadianceStorage<F::Radiance>, T: Tracer<F>>(
+pub fn merge<F: FluenceType, S: RadianceStorage<F::Radiance>, T: Tracer<F>>(
     grid: Expr<Grid>,
     probe: Expr<Probe>,
     (storage, next_radiance_params): (&S, &S::Params),
