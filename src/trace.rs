@@ -4,7 +4,9 @@ use keter::lang::types::vector::Vec2;
 use keter::prelude::*;
 use keter::runtime::KernelParameter;
 
+use crate::color::{Color, ColorType};
 use crate::fluence::{Fluence, FluenceType, PartialTransmittance, Radiance};
+use crate::utils::aabb_intersect;
 use crate::{Axis, Grid, Probe};
 
 pub trait Tracer<F: FluenceType> {
@@ -41,8 +43,20 @@ pub trait WorldTracer<F: FluenceType> {
         &self,
         params: &Self::Params,
         start: Expr<Vec2<f32>>,
-        end: Expr<Vec2<f32>>,
+        direction: Expr<Vec2<f32>>,
+        length: Expr<f32>,
     ) -> Expr<Fluence<F>>;
+    #[tracked]
+    fn trace_to(
+        &self,
+        params: &Self::Params,
+        start: Expr<Vec2<f32>>,
+        end: Expr<Vec2<f32>>,
+    ) -> Expr<Fluence<F>> {
+        let delta = end - start;
+        let length = delta.length();
+        self.trace(params, start, delta / length, length)
+    }
 }
 
 // TODO: Deduplicate.
@@ -102,8 +116,9 @@ impl<F: FluenceType, T: WorldTracer<F>> SegmentedWorldMapper<F, T> {
         let end_cell = probe.cell + Vec2::expr(1, grid.ray_offset(probe.dir));
         let end = self.to_world(grid, end_cell, segment);
         // TODO: There's a weird bug with the edges that's probably a result of this going over?
+        // Also make this extend to infinity?
         self.tracer
-            .trace(tracer_params, start, end)
+            .trace_to(tracer_params, start, end)
             .opaque_if(!self.contains(grid, end_cell, segment))
     }
 }
@@ -135,7 +150,7 @@ impl<F: FluenceType, T: WorldTracer<F>> Tracer<F> for SegmentedWorldMapper<F, T>
         let trace = |offset: Expr<Vec2<i32>>| {
             let cell = cell + offset;
             self.tracer
-                .trace(params, start, self.to_world(grid, cell, segment))
+                .trace_to(params, start, self.to_world(grid, cell, segment))
                 .opaque_if(!self.contains(grid, cell, segment))
         };
 
@@ -191,19 +206,19 @@ impl<F: FluenceType, T: WorldTracer<F>> Tracer<F> for WorldMapper<F, T> {
         if cell.x % 2 == 0 {
             [
                 self.tracer
-                    .trace(params, start, self.to_world(grid, cell + lower_offset * 2))
+                    .trace_to(params, start, self.to_world(grid, cell + lower_offset * 2))
                     .restrict_angle(lower_size),
                 self.tracer
-                    .trace(params, start, self.to_world(grid, cell + upper_offset * 2))
+                    .trace_to(params, start, self.to_world(grid, cell + upper_offset * 2))
                     .restrict_angle(upper_size),
             ]
         } else {
             [
                 self.tracer
-                    .trace(params, start, self.to_world(grid, cell + lower_offset))
+                    .trace_to(params, start, self.to_world(grid, cell + lower_offset))
                     .restrict_angle(lower_size),
                 self.tracer
-                    .trace(params, start, self.to_world(grid, cell + upper_offset))
+                    .trace_to(params, start, self.to_world(grid, cell + upper_offset))
                     .restrict_angle(upper_size),
             ]
         }
@@ -237,10 +252,76 @@ fn intersect_circle(
     }
 }
 
-// #[derive(Debug, Clone, PartialEq)]
-// pub struct VoxelTracer<F: FluenceType> {
-//     pub buffer: Buffer<
-// }
+pub struct VoxelTracer<C: ColorType> {
+    pub buffer: Buffer<Color<C>>,
+    pub size: Vec2<u32>,
+}
+impl<C: ColorType> VoxelTracer<C> {
+    pub fn new(size: Vec2<u32>) -> Self {
+        Self {
+            buffer: DEVICE.create_buffer::<Color<C>>((size.x * size.y) as usize),
+            size,
+        }
+    }
+}
+impl<C: ColorType> WorldTracer<C::Fluence> for VoxelTracer<C> {
+    type Params = ();
+    #[tracked]
+    fn trace(
+        &self,
+        _params: &(),
+        start: Expr<Vec2<f32>>,
+        ray_dir: Expr<Vec2<f32>>,
+        length: Expr<f32>,
+    ) -> Expr<Fluence<C::Fluence>> {
+        let inv_dir = (ray_dir + f32::EPSILON).recip();
+        let interval = aabb_intersect(
+            start,
+            inv_dir,
+            Vec2::splat(0.01).expr(),
+            self.size.expr().cast_f32() - Vec2::splat(0.01).expr(),
+        );
+        let start_t = keter::max(interval.x, 0.0);
+        let ray_start = start + start_t * ray_dir;
+        let end_t = keter::min(interval.y, length) - start_t;
+        if end_t <= 0.01 {
+            Fluence::<C::Fluence>::empty().expr()
+        } else {
+            let pos = ray_start.floor().cast_u32().var();
+
+            let delta_dist = inv_dir.abs();
+
+            let ray_step = ray_dir.signum().cast_i32().cast_u32();
+            let side_dist =
+                (ray_dir.signum() * (pos.cast_f32() - ray_start) + ray_dir.signum() * 0.5 + 0.5)
+                    * delta_dist;
+            let side_dist = side_dist.var();
+
+            let last_t = 0.0_f32.var();
+
+            let fluence = Fluence::<C::Fluence>::empty().var();
+
+            loop {
+                let next_t = side_dist.reduce_min();
+                let color = self.buffer.read(pos.x + pos.y * self.size.x);
+                if !color.is_transparent() {
+                    let segment_size = keter::min(next_t, end_t) - last_t;
+                    *fluence = fluence.over(color.to_fluence(segment_size));
+                    *last_t = next_t;
+                    if next_t >= end_t {
+                        break;
+                    }
+                }
+                let mask = side_dist <= side_dist.yx();
+
+                *side_dist += mask.select(delta_dist, Vec2::splat_expr(0.0));
+                *pos += mask.select(ray_step, Vec2::splat_expr(0));
+            }
+
+            **fluence
+        }
+    }
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct AnalyticTracer<F: FluenceType> {
@@ -254,11 +335,9 @@ impl<F: FluenceType> WorldTracer<F> for AnalyticTracer<F> {
         &self,
         _params: &Self::Params,
         start: Expr<Vec2<f32>>,
-        end: Expr<Vec2<f32>>,
+        dir: Expr<Vec2<f32>>,
+        end_t: Expr<f32>,
     ) -> Expr<Fluence<F>> {
-        let end_t = (end - start).length();
-        let dir = (end - start).normalize();
-
         let best_t = end_t.var();
         let best_color = F::Radiance::black().var();
         for Circle {
@@ -296,11 +375,9 @@ impl<F: FluenceType> WorldTracer<F> for AnalyticCursorTracer<F> {
         &self,
         cursor_pos: &Self::Params,
         start: Expr<Vec2<f32>>,
-        end: Expr<Vec2<f32>>,
+        dir: Expr<Vec2<f32>>,
+        end_t: Expr<f32>,
     ) -> Expr<Fluence<F>> {
-        let end_t = (end - start).length();
-        let dir = (end - start).normalize();
-
         let best_t = end_t.var();
         let best_color = F::Radiance::black().var();
         for Circle {

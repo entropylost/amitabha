@@ -10,6 +10,9 @@ pub struct Color<C: ColorType> {
     pub opacity: C::Opacity,
 }
 impl<C: ColorType> ColorExpr<C> {
+    pub fn is_transparent(self) -> Expr<bool> {
+        C::Opacity::is_transparent(self.opacity)
+    }
     pub fn to_fluence(self, segment_length: Expr<f32>) -> Expr<Fluence<C::Fluence>> {
         C::to_fluence(self.self_, segment_length)
     }
@@ -30,6 +33,7 @@ pub trait Emission: Value {
     fn black() -> Self;
 }
 pub trait Opacity: Value {
+    fn is_transparent(this: Expr<Self>) -> Expr<bool>;
     fn transparent() -> Self;
     fn opaque() -> Self;
 }
@@ -51,6 +55,10 @@ impl Emission for Vec3<f16> {
 }
 
 impl Opacity for f32 {
+    #[tracked]
+    fn is_transparent(this: Expr<Self>) -> Expr<bool> {
+        this == Self::transparent()
+    }
     fn transparent() -> Self {
         0.0
     }
@@ -59,6 +67,10 @@ impl Opacity for f32 {
     }
 }
 impl Opacity for Vec3<f32> {
+    #[tracked]
+    fn is_transparent(this: Expr<Self>) -> Expr<bool> {
+        (this == Self::transparent()).all()
+    }
     fn transparent() -> Self {
         Vec3::splat(0.0)
     }
@@ -67,6 +79,10 @@ impl Opacity for Vec3<f32> {
     }
 }
 impl Opacity for Vec3<f16> {
+    #[tracked]
+    fn is_transparent(this: Expr<Self>) -> Expr<bool> {
+        (this == Self::transparent()).all()
+    }
     fn transparent() -> Self {
         Vec3::splat(f16::ZERO)
     }
@@ -75,6 +91,10 @@ impl Opacity for Vec3<f16> {
     }
 }
 impl Opacity for bool {
+    #[tracked]
+    fn is_transparent(this: Expr<Self>) -> Expr<bool> {
+        this == Self::transparent()
+    }
     fn transparent() -> Self {
         false
     }
@@ -145,6 +165,24 @@ impl ColorType for BinaryF32 {
         Fluence::expr(
             color.emission * color.opacity.cast_u32().cast_f32(),
             !color.opacity,
+        )
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct BinarySF32;
+impl ColorType for BinarySF32 {
+    type Emission = f32;
+    type Opacity = bool;
+    type Fluence = fluence::SingleF32;
+    #[tracked]
+    fn to_fluence(
+        color: Expr<Color<Self>>,
+        _segment_length: Expr<f32>,
+    ) -> Expr<Fluence<Self::Fluence>> {
+        Fluence::expr(
+            color.emission * color.opacity.cast_u32().cast_f32(),
+            (!color.opacity).cast_u32().cast_f32(),
         )
     }
 }

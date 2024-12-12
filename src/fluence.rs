@@ -36,6 +36,14 @@ impl<F: FluenceType> Fluence<F> {
 }
 impl<F: FluenceType> FluenceExpr<F> {
     #[tracked]
+    pub fn over(self, far: Expr<Fluence<F>>) -> Expr<Fluence<F>> {
+        F::over(self.self_, far)
+    }
+    #[tracked]
+    pub fn over_radiance(self, far: Expr<F::Radiance>) -> Expr<F::Radiance> {
+        F::over_radiance(self.self_, far)
+    }
+    #[tracked]
     pub fn restrict_angle(self, angle: Expr<f32>) -> Expr<Fluence<F>> {
         Fluence::expr(
             F::Radiance::restrict_angle(self.radiance, angle),

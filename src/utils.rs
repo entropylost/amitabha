@@ -1,5 +1,19 @@
-use keter::lang::types::vector::Vec3;
+use keter::lang::types::vector::{Vec2, Vec3};
 use keter::prelude::*;
+
+#[tracked]
+pub fn aabb_intersect(
+    start: Expr<Vec2<f32>>,
+    inv_dir: Expr<Vec2<f32>>,
+    aabb_min: Expr<Vec2<f32>>,
+    aabb_max: Expr<Vec2<f32>>,
+) -> Expr<Vec2<f32>> {
+    let t0 = (aabb_min - start) * inv_dir;
+    let t1 = (aabb_max - start) * inv_dir;
+    let tmin = keter::min(t0, t1).reduce_max();
+    let tmax = keter::max(t0, t1).reduce_min();
+    Vec2::expr(tmin, tmax)
+}
 
 // https://github.com/markjarzynski/PCG3D/blob/master/pcg3d.hlsl
 #[tracked]

@@ -1,13 +1,12 @@
 use std::marker::PhantomData;
 use std::mem::swap;
 
-use amitabha::fluence::{Fluence, FluenceType, RgbF16};
+use amitabha::color::Color;
+use amitabha::fluence::{self, Fluence, FluenceType};
 use amitabha::storage::BufferStorage;
-use amitabha::trace::{
-    merge_up, AnalyticCursorTracer, Circle, SegmentedWorldMapper, StorageTracer, WorldSegment,
-};
+use amitabha::trace::{merge_up, SegmentedWorldMapper, StorageTracer, VoxelTracer, WorldSegment};
 use amitabha::utils::pcgf;
-use amitabha::{merge_0_even, merge_0_odd, Axis, Grid, MergeKernelSettings, Probe};
+use amitabha::{color, merge_0_even, merge_0_odd, Axis, Grid, MergeKernelSettings, Probe};
 use keter::lang::types::vector::{Vec2, Vec3};
 use keter::prelude::*;
 use keter_testbed::{App, MouseButton};
@@ -16,11 +15,11 @@ const DISPLAY_SIZE: u32 = 512;
 const SIZE: u32 = DISPLAY_SIZE / 2;
 const SEGMENTS: u32 = 4 * 2;
 
-type F = RgbF16;
+type F = fluence::SingleF32;
+type C = color::BinarySF32;
 
 fn main() {
     let num_cascades = SIZE.trailing_zeros() as usize;
-    let mut light_pos = Vec2::new(256.0, 256.0);
 
     let grid_size = [DISPLAY_SIZE; 2];
     let app = App::new("Amitabha", grid_size)
@@ -34,20 +33,9 @@ fn main() {
     let mut buffer_b =
         DEVICE.create_buffer::<<F as FluenceType>::Radiance>((SEGMENTS * SIZE * SIZE * 2) as usize);
 
-    let tracer = AnalyticCursorTracer::<F> {
-        circles: vec![
-            Circle {
-                center: Vec2::new(0.0, 0.0),
-                radius: 10.0,
-                color: Vec3::splat(f16::from_f32_const(10.0)),
-            },
-            Circle {
-                center: Vec2::new(200.0, 150.0),
-                radius: 10.0,
-                color: Vec3::splat(f16::from_f32_const(0.0)),
-            },
-        ],
-    };
+    let world_size = Vec2::new(512_u32, 512_u32);
+    let tracer = VoxelTracer::<C>::new(world_size);
+    let world = tracer.buffer.view(..);
 
     let rotations = [Vec2::x(), Vec2::y(), -Vec2::x(), -Vec2::y()];
 
@@ -85,16 +73,15 @@ fn main() {
         })
         .collect::<Vec<_>>();
 
-    let store_level_kernel = DEVICE.create_kernel::<fn(Grid, Buffer<Fluence<F>>, Vec2<f32>)>(
-        &track!(|grid, buffer, light_pos| {
+    let store_level_kernel =
+        DEVICE.create_kernel::<fn(Grid, Buffer<Fluence<F>>)>(&track!(|grid, buffer| {
             set_block_size([32, 2, 2]);
             let (cell, dir) = Axis::dispatch_id(store_axes);
             let cell = cell.cast_i32();
             let probe = Probe::expr(cell, dir);
-            let fluence = tracer.compute_ray(grid, probe, &light_pos);
+            let fluence = tracer.compute_ray(grid, probe, &());
             ray_storage.store(&buffer, grid, probe, fluence);
-        }),
-    );
+        }));
 
     let merge_up_kernel = DEVICE.create_kernel::<fn(Grid, Buffer<Fluence<F>>, Buffer<Fluence<F>>)>(
         &track!(|grid, last_buffer, buffer| {
@@ -160,7 +147,7 @@ fn main() {
 
             app.display().write(
                 dispatch_id().xy(),
-                app.display().read(dispatch_id().xy()) + radiance.cast_f32(),
+                app.display().read(dispatch_id().xy()) + radiance,
             );
         }),
     );
@@ -173,13 +160,28 @@ fn main() {
             app.display().read(dispatch_id().xy()) + Vec3::splat_expr(noise),
         );
     }));
+    let draw_circle =
+        DEVICE.create_kernel::<fn(Vec2<f32>, f32, Color<C>)>(&track!(|center, radius, color| {
+            let pos = dispatch_id().xy();
+            if (pos.cast_f32() - center).length() < radius {
+                world.write(pos.x + pos.y * world_size.x, color);
+            }
+        }));
 
     let mut merge_timings = vec![vec![]; num_cascades];
     let mut merge_up_timings = vec![vec![]; num_cascades + 1];
 
     app.run(|rt, _scope| {
         if rt.pressed_button(MouseButton::Left) {
-            light_pos = rt.cursor_position;
+            draw_circle.dispatch(
+                [world_size.x, world_size.y, 1],
+                &rt.cursor_position,
+                &10.0,
+                &Color {
+                    emission: 1.0,
+                    opacity: true,
+                },
+            );
         }
         let merge_up_commands = (0..num_cascades + 1)
             .map(|i| {
@@ -190,7 +192,6 @@ fn main() {
                         Axis::dispatch_size(store_axes, dispatch_grid),
                         &grid,
                         &cache_pyramid[i],
-                        &light_pos,
                     )
                 } else {
                     merge_up_kernel.dispatch_async(
