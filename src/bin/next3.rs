@@ -172,17 +172,40 @@ fn main() {
     let mut merge_up_timings = vec![vec![]; num_cascades + 1];
 
     app.run(|rt, _scope| {
+        if rt.pressed_button(MouseButton::Middle) {
+            draw_circle.dispatch(
+                [world_size.x, world_size.y, 1],
+                &rt.cursor_position,
+                &10.0,
+                &Color {
+                    emission: 10.0,
+                    opacity: true,
+                },
+            );
+        }
         if rt.pressed_button(MouseButton::Left) {
             draw_circle.dispatch(
                 [world_size.x, world_size.y, 1],
                 &rt.cursor_position,
                 &10.0,
                 &Color {
-                    emission: 1.0,
+                    emission: 0.0,
                     opacity: true,
                 },
             );
         }
+        if rt.pressed_button(MouseButton::Right) {
+            draw_circle.dispatch(
+                [world_size.x, world_size.y, 1],
+                &rt.cursor_position,
+                &10.0,
+                &Color {
+                    emission: 0.0,
+                    opacity: false,
+                },
+            );
+        }
+
         let merge_up_commands = (0..num_cascades + 1)
             .map(|i| {
                 let grid = Grid::new(Vec2::new(SIZE >> i, SEGMENTS * SIZE), 2 << i);

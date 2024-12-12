@@ -274,6 +274,7 @@ impl<C: ColorType> WorldTracer<C::Fluence> for VoxelTracer<C> {
         ray_dir: Expr<Vec2<f32>>,
         length: Expr<f32>,
     ) -> Expr<Fluence<C::Fluence>> {
+        let start = start + Vec2::new(0.163, 0.285);
         let inv_dir = (ray_dir + f32::EPSILON).recip();
         let interval = aabb_intersect(
             start,
@@ -304,7 +305,7 @@ impl<C: ColorType> WorldTracer<C::Fluence> for VoxelTracer<C> {
             loop {
                 let next_t = side_dist.reduce_min();
                 let color = self.buffer.read(pos.x + pos.y * self.size.x);
-                if !color.is_transparent() {
+                if !color.is_transparent() || next_t >= end_t {
                     let segment_size = keter::min(next_t, end_t) - last_t;
                     *fluence = fluence.over(color.to_fluence(segment_size));
                     *last_t = next_t;

@@ -169,6 +169,7 @@ impl ColorType for BinaryF32 {
     }
 }
 
+// TODO: Make ColorType<F> instead and implement on the preexisting fluence types?
 #[derive(Debug, Clone, Copy)]
 pub struct BinarySF32;
 impl ColorType for BinarySF32 {
