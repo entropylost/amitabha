@@ -6,7 +6,7 @@ use amitabha::fluence::{self, Fluence, FluenceType};
 use amitabha::storage::BufferStorage;
 use amitabha::trace::{merge_up, SegmentedWorldMapper, StorageTracer, VoxelTracer, WorldSegment};
 use amitabha::utils::pcgf;
-use amitabha::{color, merge_0_even, merge_0_odd, Axis, Grid, MergeKernelSettings, Probe};
+use amitabha::{color, merge_0, Axis, Grid, MergeKernelSettings, Probe};
 use keter::lang::types::vector::{Vec2, Vec3};
 use keter::prelude::*;
 use keter_testbed::{App, MouseButton};
@@ -133,11 +133,12 @@ fn main() {
                     SIZE.expr()
                 }
                 .cast_i32();
-                merge_0_even::<F, _, _>(
+                merge_0::<F, _, _>(
                     next_grid,
                     Vec2::expr(cell.x / 2, cell.y / 2 + offset + global_y_offset),
                     (&merge_storage, &next_radiance),
                     (&tracer, &()),
+                    true,
                 )
             } else {
                 let offset = if cell.y % 2 == 0 {
@@ -147,11 +148,12 @@ fn main() {
                 }
                 .cast_i32();
                 // Need to collect from odd cells.
-                merge_0_odd::<F, _, _>(
+                merge_0::<F, _, _>(
                     next_grid,
                     Vec2::expr(cell.x / 2, cell.y / 2 + offset + global_y_offset),
                     (&merge_storage, &next_radiance),
                     (&tracer, &()),
+                    false,
                 )
             };
 

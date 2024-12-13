@@ -230,66 +230,42 @@ impl<F: FluenceType, T: Tracer<F>, S: RadianceStorage<F::Radiance>> MergeKernel<
 }
 
 // TODO: Add tracer? Make separate Tracer1 type?
-// Merges into (cell.x, cell.y + 0.5)
+// Merges into (cell.x + 0.5, cell.y + 0.5) if odd,
+// Merges into (cell.x, cell.y) if even
 #[tracked]
-pub fn merge_0_odd<F: FluenceType, S: RadianceStorage<F::Radiance>, T: Tracer0<F>>(
+pub fn merge_0<F: FluenceType, S: RadianceStorage<F::Radiance>, T: Tracer0<F>>(
     next_grid: Expr<Grid>,
     cell: Expr<Vec2<i32>>,
     (storage, next_radiance_params): (&S, &S::Params),
     (tracer, tracer_params): (&T, &T::Params),
+    parity: bool,
 ) -> Expr<F::Radiance> {
     let load_next = |probe: Expr<Probe>| storage.load(next_radiance_params, next_grid, probe);
 
     let lower_dir = 0_u32.expr();
     let upper_dir = 1_u32.expr();
-    let lower_offset = Vec2::expr(1, 0);
+    let lower_offset = Vec2::expr(1, if parity { -1 } else { 0 });
     let upper_offset = Vec2::expr(1, 1);
 
-    let [lower, upper] = tracer.trace_0(tracer_params, next_grid, cell, false);
-    F::Radiance::merge(
-        F::over_radiance(
-            lower,
-            load_next(Probe::expr(cell + lower_offset, lower_dir)),
-        ),
-        F::over_radiance(
-            upper,
-            load_next(Probe::expr(cell + upper_offset, upper_dir)),
-        ),
-    )
-}
+    let [lower, upper] = tracer.trace_0(tracer_params, next_grid, cell, parity);
 
-// Merges into (cell.x, cell.y)
-#[tracked]
-pub fn merge_0_even<F: FluenceType, S: RadianceStorage<F::Radiance>, T: Tracer0<F>>(
-    next_grid: Expr<Grid>,
-    cell: Expr<Vec2<i32>>,
-    (storage, next_radiance_params): (&S, &S::Params),
-    (tracer, tracer_params): (&T, &T::Params),
-) -> Expr<F::Radiance> {
-    let load_next = |probe: Expr<Probe>| storage.load(next_radiance_params, next_grid, probe);
+    let next_lower = F::over_radiance(
+        lower,
+        load_next(Probe::expr(cell + lower_offset, lower_dir)),
+    );
+    let next_upper = F::over_radiance(
+        upper,
+        load_next(Probe::expr(cell + upper_offset, upper_dir)),
+    );
 
-    let lower_dir = 0_u32.expr();
-    let upper_dir = 1_u32.expr();
-    let lower_offset = Vec2::expr(1, -1);
-    let upper_offset = Vec2::expr(1, 1);
-
-    let [lower, upper] = tracer.trace_0(tracer_params, next_grid, cell, true);
-    F::Radiance::merge(
-        F::Radiance::blend(
-            load_next(Probe::expr(cell, lower_dir)),
-            F::over_radiance(
-                lower,
-                load_next(Probe::expr(cell + lower_offset, lower_dir)),
-            ),
-        ),
-        F::Radiance::blend(
-            load_next(Probe::expr(cell, upper_dir)),
-            F::over_radiance(
-                upper,
-                load_next(Probe::expr(cell + upper_offset, upper_dir)),
-            ),
-        ),
-    )
+    if parity {
+        F::Radiance::merge(
+            F::Radiance::blend(load_next(Probe::expr(cell, lower_dir)), next_lower),
+            F::Radiance::blend(load_next(Probe::expr(cell, upper_dir)), next_upper),
+        )
+    } else {
+        F::Radiance::merge(next_lower, next_upper)
+    }
 }
 
 #[tracked]
