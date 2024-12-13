@@ -1,3 +1,4 @@
+use std::f32::consts::PI;
 use std::marker::PhantomData;
 
 use keter::lang::types::vector::Vec2;
@@ -8,6 +9,17 @@ use crate::color::{Color, ColorType};
 use crate::fluence::{Fluence, FluenceType, PartialTransmittance, Radiance};
 use crate::utils::aabb_intersect;
 use crate::{Axis, Grid, Probe};
+
+pub trait Tracer0<F: FluenceType> {
+    type Params: KernelParameter;
+    fn trace_0(
+        &self,
+        params: &Self::Params,
+        grid: Expr<Grid>,
+        cell: Expr<Vec2<i32>>,
+        even: bool,
+    ) -> [Expr<Fluence<F>>; 2];
+}
 
 pub trait Tracer<F: FluenceType> {
     type Params: KernelParameter;
@@ -76,6 +88,22 @@ pub struct SegmentedWorldMapper<F: FluenceType, T> {
 }
 impl<F: FluenceType, T> SegmentedWorldMapper<F, T> {
     #[tracked]
+    pub fn to_world_f(
+        &self,
+        grid: Expr<Grid>,
+        cell: Expr<Vec2<f32>>,
+        segment: Expr<WorldSegment>,
+    ) -> Expr<Vec2<f32>> {
+        let cell = cell - Vec2::y() * segment.offset.cast_f32();
+        let pos_norm =
+            cell / Vec2::expr(grid.size.x, grid.size.y / self.segments.len() as u32).cast_f32();
+        let pos_rotated = Vec2::expr(
+            pos_norm.x * segment.rotation.x - pos_norm.y * segment.rotation.y,
+            pos_norm.x * segment.rotation.y + pos_norm.y * segment.rotation.x,
+        );
+        pos_rotated * segment.size + segment.origin
+    }
+    #[tracked]
     pub fn to_world(
         &self,
         grid: Expr<Grid>,
@@ -84,8 +112,7 @@ impl<F: FluenceType, T> SegmentedWorldMapper<F, T> {
     ) -> Expr<Vec2<f32>> {
         let cell = cell - Vec2::y() * segment.offset.cast_i32();
         let pos_norm = cell.cast_f32()
-            / Vec2::expr(grid.size.x, grid.size.y / self.segments.len() as u32).cast_f32()
-            - 0.5;
+            / Vec2::expr(grid.size.x, grid.size.y / self.segments.len() as u32).cast_f32();
         let pos_rotated = Vec2::expr(
             pos_norm.x * segment.rotation.x - pos_norm.y * segment.rotation.y,
             pos_norm.x * segment.rotation.y + pos_norm.y * segment.rotation.x,
@@ -158,6 +185,53 @@ impl<F: FluenceType, T: WorldTracer<F>> Tracer<F> for SegmentedWorldMapper<F, T>
         [
             trace(lower_offset * factor).restrict_angle(lower_size),
             trace(upper_offset * factor).restrict_angle(upper_size),
+        ]
+    }
+}
+
+impl<F: FluenceType, T: WorldTracer<F>> Tracer0<F> for SegmentedWorldMapper<F, T> {
+    type Params = T::Params;
+    #[tracked]
+    fn trace_0(
+        &self,
+        params: &Self::Params,
+        next_grid: Expr<Grid>,
+        cell: Expr<Vec2<i32>>,
+        even: bool,
+    ) -> [Expr<Fluence<F>>; 2] {
+        let cell_f = cell.cast_f32()
+            + if even {
+                Vec2::splat(0.0)
+            } else {
+                Vec2::new(0.5, 0.5)
+            };
+
+        let segment = cell.y.cast_u32() / (next_grid.size.y / self.segments.len() as u32);
+        let segment = self.segments.read(segment);
+
+        let start = self.to_world_f(next_grid, cell_f, segment);
+        let lower_size = (PI / 4.0).expr();
+        let upper_size = (PI / 4.0).expr();
+        let lower_offset = Vec2::expr(0.5, -0.5);
+        let upper_offset = Vec2::expr(0.5, 0.5);
+
+        let factor = if even { 2.0 } else { 1.0 };
+
+        [
+            self.tracer
+                .trace_to(
+                    params,
+                    start,
+                    self.to_world_f(next_grid, cell_f + lower_offset * factor, segment),
+                )
+                .restrict_angle(lower_size),
+            self.tracer
+                .trace_to(
+                    params,
+                    start,
+                    self.to_world_f(next_grid, cell_f + upper_offset * factor, segment),
+                )
+                .restrict_angle(upper_size),
         ]
     }
 }

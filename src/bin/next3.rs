@@ -37,15 +37,20 @@ fn main() {
     let tracer = VoxelTracer::<C>::new(world_size);
     let world = tracer.buffer.view(..);
 
-    let rotations = [Vec2::x(), Vec2::y(), -Vec2::x(), -Vec2::y()];
+    let rotations: [Vec2<i32>; 4] = [Vec2::x(), Vec2::y(), -Vec2::x(), -Vec2::y()];
 
     let mut segments = vec![];
 
     for r in rotations {
         for y_offset in [0, 1] {
+            let r = Vec2::new(r.x as f32, r.y as f32);
+            let x_dir = r;
+            let y_dir = Vec2::new(-r.y, r.x);
+            let diag = x_dir + y_dir;
             segments.push(WorldSegment {
                 rotation: r,
-                origin: Vec2::new(256.0, 256.0) + Vec2::new(-r.y, r.x) * y_offset as f32,
+                origin: Vec2::new(256.0, 256.0) - 256.0 * diag + 0.5 * diag - 0.5 * x_dir // TODO: Why the fuck is this here?
+                    + y_dir * y_offset as f32,
                 size: Vec2::new(512.0, 512.0),
                 offset: SIZE * segments.len() as u32,
             });
@@ -104,44 +109,49 @@ fn main() {
 
     let kernel = settings.build_kernel();
 
-    let draw = DEVICE.create_kernel::<fn(Vec2<f32>, u32, Buffer<<F as FluenceType>::Radiance>)>(
+    let draw = DEVICE.create_kernel::<fn(Vec2<i32>, u32, Buffer<<F as FluenceType>::Radiance>)>(
         &track!(|rotation, rotation_index, next_radiance| {
-            let cell = dispatch_id().xy();
-            let cell = cell.cast_f32() - Vec2::splat(DISPLAY_SIZE as f32 / 2.0);
+            let cell = dispatch_id().xy().cast_i32();
+            let cell = cell - Vec2::splat(DISPLAY_SIZE as i32 / 2);
             let cell = Vec2::expr(
                 cell.x * rotation.x - cell.y * rotation.y,
                 cell.x * rotation.y + cell.y * rotation.x,
             );
-            let cell = cell + Vec2::splat(DISPLAY_SIZE as f32 / 2.0);
+            let cell = cell + Vec2::splat(DISPLAY_SIZE as i32 / 2);
 
             let cell = cell + Vec2::x();
-            let cell = cell.round().cast_i32();
 
-            let grid = Grid::new(Vec2::new(DISPLAY_SIZE, SEGMENTS * SIZE), 1).expr();
+            let next_grid = Grid::new(Vec2::new(SIZE, SEGMENTS * SIZE), 2).expr();
+
+            let global_y_offset = (2 * SIZE * rotation_index).cast_i32();
 
             // TODO: Divide by 2 is bad.
             let radiance = if cell.x % 2 == 0 {
                 let offset = if cell.y % 2 == 0 {
-                    (2 * SIZE * rotation_index).cast_i32()
+                    0.expr()
                 } else {
-                    (SIZE + 2 * SIZE * rotation_index).cast_i32()
-                };
-                merge_0_even::<F, _>(
-                    grid,
-                    Vec2::expr(cell.x + 1, cell.y / 2 + offset),
+                    SIZE.expr()
+                }
+                .cast_i32();
+                merge_0_even::<F, _, _>(
+                    next_grid,
+                    Vec2::expr(cell.x / 2, cell.y / 2 + offset + global_y_offset),
                     (&merge_storage, &next_radiance),
+                    (&tracer, &()),
                 )
             } else {
                 let offset = if cell.y % 2 == 0 {
-                    -1 + (SIZE + 2 * SIZE * rotation_index).cast_i32()
+                    (SIZE - 1).expr()
                 } else {
-                    (2 * SIZE * rotation_index).cast_i32()
-                };
+                    0.expr()
+                }
+                .cast_i32();
                 // Need to collect from odd cells.
-                merge_0_odd::<F, _>(
-                    grid,
-                    Vec2::expr(cell.x + 1, cell.y / 2 + offset),
+                merge_0_odd::<F, _, _>(
+                    next_grid,
+                    Vec2::expr(cell.x / 2, cell.y / 2 + offset + global_y_offset),
                     (&merge_storage, &next_radiance),
+                    (&tracer, &()),
                 )
             };
 
@@ -178,7 +188,7 @@ fn main() {
                 &rt.cursor_position,
                 &10.0,
                 &Color {
-                    emission: 10.0,
+                    emission: 1.0,
                     opacity: true,
                 },
             );
@@ -293,7 +303,7 @@ fn main() {
                 total += avg;
                 let variance = timings.iter().map(|t| (t - avg).powi(2)).sum::<f64>() / c;
                 total_variance += variance;
-                println!("    {}: {:.2}ms, sd {:.3}ms", i, avg, variance.sqrt());
+                // println!("    {}: {:.2}ms, sd {:.3}ms", i, avg, variance.sqrt());
                 timings.clear();
             }
             println!("Total: {:.3}ms, sd {:.3}ms", total, total_variance.sqrt());
