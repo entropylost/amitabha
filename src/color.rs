@@ -179,11 +179,15 @@ impl ColorType for BinarySF32 {
     #[tracked]
     fn to_fluence(
         color: Expr<Color<Self>>,
-        _segment_length: Expr<f32>,
+        segment_length: Expr<f32>,
     ) -> Expr<Fluence<Self::Fluence>> {
-        Fluence::expr(
-            color.emission * color.opacity.cast_u32().cast_f32(),
-            (!color.opacity).cast_u32().cast_f32(),
-        )
+        if segment_length < 0.01 {
+            Fluence::empty().expr()
+        } else {
+            Fluence::expr(
+                color.emission * color.opacity.cast_u32().cast_f32(),
+                (!color.opacity).cast_u32().cast_f32(),
+            )
+        }
     }
 }

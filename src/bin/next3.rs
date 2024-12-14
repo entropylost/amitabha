@@ -1,3 +1,4 @@
+use std::f32::consts::PI;
 use std::marker::PhantomData;
 use std::mem::swap;
 
@@ -136,7 +137,7 @@ fn main() {
                     next_grid,
                     Vec2::expr(cell.x / 2, cell.y / 2 + offset + global_y_offset),
                     (&merge_storage, &next_radiance),
-                    (&tracer, &()),
+                    (&tracer, &((), app.overlay().var())),
                     true,
                 )
             } else {
@@ -151,10 +152,17 @@ fn main() {
                     next_grid,
                     Vec2::expr(cell.x / 2, cell.y / 2 + offset + global_y_offset),
                     (&merge_storage, &next_radiance),
-                    (&tracer, &()),
+                    (&tracer, &((), app.overlay().var())),
                     false,
                 )
             };
+
+            let base_fluence = world
+                .read(dispatch_id().x + dispatch_id().y * world_size.x)
+                .to_fluence(0.5.expr())
+                .restrict_angle((PI / 2.0).expr());
+
+            let radiance = base_fluence.over_radiance(radiance);
 
             app.display().write(
                 dispatch_id().xy(),
@@ -201,7 +209,7 @@ fn main() {
                 &rt.cursor_position,
                 &4.0,
                 &Color {
-                    emission: 1.0,
+                    emission: 0.3,
                     opacity: true,
                 },
             );
