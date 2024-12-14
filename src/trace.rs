@@ -87,6 +87,7 @@ pub struct SegmentedWorldMapper<F: FluenceType, T> {
     pub _marker: PhantomData<F>,
 }
 impl<F: FluenceType, T> SegmentedWorldMapper<F, T> {
+    // TODO: Redundant.
     #[tracked]
     pub fn to_world_f(
         &self,
@@ -209,7 +210,7 @@ impl<F: FluenceType, T: WorldTracer<F>> Tracer0<F> for SegmentedWorldMapper<F, T
         let segment = cell.y.cast_u32() / (next_grid.size.y / self.segments.len() as u32);
         let segment = self.segments.read(segment);
 
-        let start = self.to_world_f(next_grid, cell_f, segment);
+        let start = self.to_world_f(next_grid, cell_f - Vec2::expr(0.25, 0.0), segment);
         let lower_size = (PI / 4.0).expr();
         let upper_size = (PI / 4.0).expr();
         let lower_offset = Vec2::expr(0.5, -0.5);

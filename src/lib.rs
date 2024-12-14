@@ -10,7 +10,7 @@ use keter::prelude::*;
 use keter::runtime::{AsKernelArg, KernelParameter};
 
 pub mod fluence;
-use fluence::{Fluence, FluenceType, Radiance};
+use fluence::{FluenceType, Radiance};
 pub mod color;
 pub mod trace;
 use trace::{Tracer, Tracer0};

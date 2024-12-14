@@ -5,13 +5,12 @@ use amitabha::color::Color;
 use amitabha::fluence::{self, Fluence, FluenceType};
 use amitabha::storage::BufferStorage;
 use amitabha::trace::{merge_up, SegmentedWorldMapper, StorageTracer, VoxelTracer, WorldSegment};
-use amitabha::utils::pcgf;
 use amitabha::{color, merge_0, Axis, Grid, MergeKernelSettings, Probe};
-use keter::lang::types::vector::{Vec2, Vec3};
+use keter::lang::types::vector::{Vec2, Vec3, Vec4};
 use keter::prelude::*;
-use keter_testbed::{App, MouseButton};
+use keter_testbed::{App, KeyCode, MouseButton};
 
-const DISPLAY_SIZE: u32 = 512;
+const DISPLAY_SIZE: u32 = 64;
 const SIZE: u32 = DISPLAY_SIZE / 2;
 const SEGMENTS: u32 = 4 * 2;
 
@@ -23,7 +22,7 @@ fn main() {
 
     let grid_size = [DISPLAY_SIZE; 2];
     let app = App::new("Amitabha", grid_size)
-        .scale(4)
+        .scale(32)
         .dpi(2.0)
         .agx()
         .init();
@@ -33,7 +32,7 @@ fn main() {
     let mut buffer_b =
         DEVICE.create_buffer::<<F as FluenceType>::Radiance>((SEGMENTS * SIZE * SIZE * 2) as usize);
 
-    let world_size = Vec2::new(512_u32, 512_u32);
+    let world_size = Vec2::new(DISPLAY_SIZE, DISPLAY_SIZE);
     let tracer = VoxelTracer::<C>::new(world_size);
     let world = tracer.buffer.view(..);
 
@@ -43,15 +42,16 @@ fn main() {
 
     for r in rotations {
         for y_offset in [0, 1] {
+            let half_size = world_size.x as f32 / 2.0;
             let r = Vec2::new(r.x as f32, r.y as f32);
             let x_dir = r;
             let y_dir = Vec2::new(-r.y, r.x);
             let diag = x_dir + y_dir;
             segments.push(WorldSegment {
                 rotation: r,
-                origin: Vec2::new(256.0, 256.0) - 256.0 * diag + 0.5 * diag - 0.5 * x_dir // TODO: Why the fuck is this here?
+                origin: Vec2::splat(half_size) - half_size * diag + 0.5 * diag - 0.5 * x_dir // TODO: Why the fuck is this here?
                     + y_dir * y_offset as f32,
-                size: Vec2::new(512.0, 512.0),
+                size: Vec2::splat(half_size * 2.0),
                 offset: SIZE * segments.len() as u32,
             });
         }
@@ -125,7 +125,6 @@ fn main() {
 
             let global_y_offset = (2 * SIZE * rotation_index).cast_i32();
 
-            // TODO: Divide by 2 is bad.
             let radiance = if cell.x % 2 == 0 {
                 let offset = if cell.y % 2 == 0 {
                     0.expr()
@@ -164,31 +163,43 @@ fn main() {
         }),
     );
 
-    let apply_noise = DEVICE.create_kernel::<fn()>(&track!(|| {
-        let noise = pcgf(dispatch_id().x + (dispatch_id().y << 16));
-        let noise = noise / 255.0 * 6.0;
-        app.display().write(
-            dispatch_id().xy(),
-            app.display().read(dispatch_id().xy()) + Vec3::splat_expr(noise),
-        );
-    }));
     let draw_circle =
         DEVICE.create_kernel::<fn(Vec2<f32>, f32, Color<C>)>(&track!(|center, radius, color| {
             let pos = dispatch_id().xy();
-            if (pos.cast_f32() - center).length() < radius {
+            if (pos.cast_f32() - center).abs().reduce_max() < radius {
                 world.write(pos.x + pos.y * world_size.x, color);
             }
         }));
 
+    let draw_solid = DEVICE.create_kernel::<fn()>(&track!(|| {
+        let pos = dispatch_id().xy();
+        if world.read(pos.x + pos.y * world_size.x).opacity {
+            app.display().write(pos, Vec3::expr(1.0, 0.0, 0.0));
+        }
+    }));
+
+    let draw_grid = DEVICE.create_kernel::<fn(Grid, WorldSegment)>(&track!(|grid, segment| {
+        let cell = dispatch_id().xy().cast_i32() + Vec2::y() * segment.offset.cast_i32();
+        let pos = tracer.to_world(grid, cell, segment);
+        let display_pos = pos * app.scale as f32;
+        app.overlay()
+            .write(display_pos.cast_u32(), Vec4::expr(0.0, 1.0, 0.0, 1.0));
+    }));
+
+    let mut display_solid = false;
+
     let mut merge_timings = vec![vec![]; num_cascades];
     let mut merge_up_timings = vec![vec![]; num_cascades + 1];
+
+    let mut displayed_segment = 0;
+    let mut displayed_level = 0;
 
     app.run(|rt, _scope| {
         if rt.pressed_button(MouseButton::Middle) {
             draw_circle.dispatch(
                 [world_size.x, world_size.y, 1],
                 &rt.cursor_position,
-                &10.0,
+                &4.0,
                 &Color {
                     emission: 1.0,
                     opacity: true,
@@ -199,7 +210,7 @@ fn main() {
             draw_circle.dispatch(
                 [world_size.x, world_size.y, 1],
                 &rt.cursor_position,
-                &10.0,
+                &4.0,
                 &Color {
                     emission: 0.0,
                     opacity: true,
@@ -210,11 +221,27 @@ fn main() {
             draw_circle.dispatch(
                 [world_size.x, world_size.y, 1],
                 &rt.cursor_position,
-                &10.0,
+                &4.0,
                 &Color {
                     emission: 0.0,
                     opacity: false,
                 },
+            );
+        }
+
+        if rt.just_pressed_key(KeyCode::KeyA) {
+            displayed_segment = (displayed_segment + 1) % segments.len();
+        }
+        if rt.just_pressed_key(KeyCode::KeyC) {
+            displayed_level = (displayed_level + 1) % num_cascades;
+        }
+
+        {
+            let i = displayed_level;
+            draw_grid.dispatch(
+                [SIZE >> i, SIZE, 1],
+                &Grid::new(Vec2::new(SIZE >> i, SEGMENTS * SIZE), 2 << i),
+                &segments[displayed_segment],
             );
         }
 
@@ -280,9 +307,16 @@ fn main() {
                 &buffer_a,
             );
         }
-        // apply_noise.dispatch([DISPLAY_SIZE, DISPLAY_SIZE, 1]);
+        if rt.just_pressed_key(KeyCode::KeyB) {
+            display_solid = !display_solid;
+        }
+        if display_solid {
+            draw_solid.dispatch([DISPLAY_SIZE, DISPLAY_SIZE, 1]);
+        }
 
         if rt.tick % 1000 == 0 {
+            let enumerate = false;
+
             let c = 1000.0;
             println!("Merge Timings:");
             let mut total = 0.0;
@@ -292,7 +326,9 @@ fn main() {
                 total += avg;
                 let variance = timings.iter().map(|t| (t - avg).powi(2)).sum::<f64>() / c;
                 total_variance += variance;
-                // println!("    {}: {:.2}ms, sd {:.3}ms", i, avg, variance.sqrt());
+                if enumerate {
+                    println!("    {}: {:.2}ms, sd {:.3}ms", i, avg, variance.sqrt());
+                }
                 timings.clear();
             }
             println!("Total: {:.3}ms, sd {:.3}ms", total, total_variance.sqrt());
@@ -305,7 +341,9 @@ fn main() {
                 total += avg;
                 let variance = timings.iter().map(|t| (t - avg).powi(2)).sum::<f64>() / c;
                 total_variance += variance;
-                // println!("    {}: {:.2}ms, sd {:.3}ms", i, avg, variance.sqrt());
+                if enumerate {
+                    println!("    {}: {:.2}ms, sd {:.3}ms", i, avg, variance.sqrt());
+                }
                 timings.clear();
             }
             println!("Total: {:.3}ms, sd {:.3}ms", total, total_variance.sqrt());

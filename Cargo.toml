@@ -2,7 +2,7 @@
 name = "amitabha"
 version = "0.1.0"
 edition = "2021"
-default-run = "next2ext"
+default-run = "next3"
 
 [dependencies]
 glam = { version = "0.27.0" }
