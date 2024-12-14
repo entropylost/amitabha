@@ -1,7 +1,7 @@
 use std::f32::consts::PI;
 use std::marker::PhantomData;
 
-use keter::lang::types::vector::{Vec2, Vec4};
+use keter::lang::types::vector::Vec2;
 use keter::prelude::*;
 use keter::runtime::KernelParameter;
 
@@ -191,11 +191,11 @@ impl<F: FluenceType, T: WorldTracer<F>> Tracer<F> for SegmentedWorldMapper<F, T>
 }
 
 impl<F: FluenceType, T: WorldTracer<F>> Tracer0<F> for SegmentedWorldMapper<F, T> {
-    type Params = (T::Params, Tex2dVar<Vec4<f32>>);
+    type Params = T::Params;
     #[tracked]
     fn trace_0(
         &self,
-        (params, overlay): &Self::Params,
+        params: &Self::Params,
         next_grid: Expr<Grid>,
         cell: Expr<Vec2<i32>>,
         even: bool,
@@ -207,15 +207,10 @@ impl<F: FluenceType, T: WorldTracer<F>> Tracer0<F> for SegmentedWorldMapper<F, T
                 Vec2::new(0.5, 0.5)
             };
 
-        let segment_i = cell.y.cast_u32() / (next_grid.size.y / self.segments.len() as u32);
-        let segment = self.segments.read(segment_i);
+        let segment = cell.y.cast_u32() / (next_grid.size.y / self.segments.len() as u32);
+        let segment = self.segments.read(segment);
 
         let start = self.to_world_f(next_grid, cell_f, segment);
-
-        if segment_i == 1 {
-            let display_pos = (start * 32.0).cast_u32();
-            overlay.write(display_pos, Vec4::expr(0.0, 0.0, 1.0, 1.0));
-        }
 
         let lower_size = (PI / 4.0).expr();
         let upper_size = (PI / 4.0).expr();

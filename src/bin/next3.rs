@@ -7,11 +7,11 @@ use amitabha::fluence::{self, Fluence, FluenceType};
 use amitabha::storage::BufferStorage;
 use amitabha::trace::{merge_up, SegmentedWorldMapper, StorageTracer, VoxelTracer, WorldSegment};
 use amitabha::{color, merge_0, Axis, Grid, MergeKernelSettings, Probe};
-use keter::lang::types::vector::{Vec2, Vec3, Vec4};
+use keter::lang::types::vector::{Vec2, Vec3};
 use keter::prelude::*;
 use keter_testbed::{App, KeyCode, MouseButton};
 
-const DISPLAY_SIZE: u32 = 64;
+const DISPLAY_SIZE: u32 = 512;
 const SIZE: u32 = DISPLAY_SIZE / 2;
 const SEGMENTS: u32 = 4 * 2;
 
@@ -23,7 +23,7 @@ fn main() {
 
     let grid_size = [DISPLAY_SIZE; 2];
     let app = App::new("Amitabha", grid_size)
-        .scale(32)
+        .scale(4)
         .dpi(2.0)
         .agx()
         .init();
@@ -137,7 +137,7 @@ fn main() {
                     next_grid,
                     Vec2::expr(cell.x / 2, cell.y / 2 + offset + global_y_offset),
                     (&merge_storage, &next_radiance),
-                    (&tracer, &((), app.overlay().var())),
+                    (&tracer, &()),
                     true,
                 )
             } else {
@@ -152,7 +152,7 @@ fn main() {
                     next_grid,
                     Vec2::expr(cell.x / 2, cell.y / 2 + offset + global_y_offset),
                     (&merge_storage, &next_radiance),
-                    (&tracer, &((), app.overlay().var())),
+                    (&tracer, &()),
                     false,
                 )
             };
@@ -186,21 +186,10 @@ fn main() {
         }
     }));
 
-    let draw_grid = DEVICE.create_kernel::<fn(Grid, WorldSegment)>(&track!(|grid, segment| {
-        let cell = dispatch_id().xy().cast_i32() + Vec2::y() * segment.offset.cast_i32();
-        let pos = tracer.to_world(grid, cell, segment);
-        let display_pos = pos * app.scale as f32;
-        app.overlay()
-            .write(display_pos.cast_u32(), Vec4::expr(0.0, 1.0, 0.0, 1.0));
-    }));
-
     let mut display_solid = false;
 
     let mut merge_timings = vec![vec![]; num_cascades];
     let mut merge_up_timings = vec![vec![]; num_cascades + 1];
-
-    let mut displayed_segment = 0;
-    let mut displayed_level = 0;
 
     app.run(|rt, _scope| {
         if rt.pressed_button(MouseButton::Middle) {
@@ -209,7 +198,7 @@ fn main() {
                 &rt.cursor_position,
                 &4.0,
                 &Color {
-                    emission: 0.3,
+                    emission: 1.0,
                     opacity: true,
                 },
             );
@@ -234,22 +223,6 @@ fn main() {
                     emission: 0.0,
                     opacity: false,
                 },
-            );
-        }
-
-        if rt.just_pressed_key(KeyCode::KeyA) {
-            displayed_segment = (displayed_segment + 1) % segments.len();
-        }
-        if rt.just_pressed_key(KeyCode::KeyC) {
-            displayed_level = (displayed_level + 1) % num_cascades;
-        }
-
-        {
-            let i = displayed_level;
-            draw_grid.dispatch(
-                [SIZE >> i, SIZE, 1],
-                &Grid::new(Vec2::new(SIZE >> i, SEGMENTS * SIZE), 2 << i),
-                &segments[displayed_segment],
             );
         }
 
