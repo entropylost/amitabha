@@ -167,6 +167,10 @@ fn main() {
         let value = radiance_texture.read(pos);
         let denom = 0.0.var();
         let numer = Vec3::splat(0.0_f32).var();
+        if world.read(pos.x + pos.y * world_size.x).opacity {
+            app.display().write(pos, value);
+            return;
+        }
         for (offset, weight) in [
             (Vec2::<i32>::splat(0), 1.0),
             (Vec2::x(), blur),
@@ -175,10 +179,8 @@ fn main() {
             (-Vec2::y(), blur),
         ] {
             let pos = (pos.cast_i32() + offset).cast_u32();
-            // TODO: Bias surfaces as well.
-            if (pos < DISPLAY_SIZE).all()
-                && (offset == Vec2::splat(0) || !world.read(pos.x + pos.y * world_size.x).opacity)
-            {
+            // TODO: Bias surfaces as well, and do more general thing.
+            if (pos < DISPLAY_SIZE).all() && !world.read(pos.x + pos.y * world_size.x).opacity {
                 let neighbor = radiance_texture.read(pos);
                 let weight = weight * gaussian((neighbor - value).reduce_max() / delta);
                 *numer += neighbor * weight;
