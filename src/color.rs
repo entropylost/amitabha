@@ -13,7 +13,12 @@ impl<C: ColorType> ColorExpr<C> {
     pub fn is_transparent(self) -> Expr<bool> {
         C::Opacity::is_transparent(self.opacity)
     }
-    pub fn to_fluence(self, segment_length: Expr<f32>) -> Expr<Fluence<C::Fluence>> {
+}
+impl<C: ColorType> ColorExpr<C> {
+    pub fn to_fluence<F: FluenceType>(self, segment_length: Expr<f32>) -> Expr<Fluence<F>>
+    where
+        C: ToFluence<F>,
+    {
         C::to_fluence(self.self_, segment_length)
     }
 }
@@ -21,12 +26,10 @@ impl<C: ColorType> ColorExpr<C> {
 pub trait ColorType: 'static + Copy {
     type Emission: Emission;
     type Opacity: Opacity;
-    type Fluence: FluenceType;
+}
 
-    fn to_fluence(
-        color: Expr<Color<Self>>,
-        segment_length: Expr<f32>,
-    ) -> Expr<Fluence<Self::Fluence>>;
+pub trait ToFluence<F: FluenceType>: ColorType {
+    fn to_fluence(color: Expr<Color<Self>>, segment_length: Expr<f32>) -> Expr<Fluence<F>>;
 }
 
 pub trait Emission: Value {
@@ -108,12 +111,13 @@ pub struct RgbF32;
 impl ColorType for RgbF32 {
     type Emission = Vec3<f32>;
     type Opacity = Vec3<f32>;
-    type Fluence = fluence::RgbF32;
+}
+impl ToFluence<fluence::RgbF32> for RgbF32 {
     #[tracked]
     fn to_fluence(
         color: Expr<Color<Self>>,
         segment_length: Expr<f32>,
-    ) -> Expr<Fluence<Self::Fluence>> {
+    ) -> Expr<Fluence<fluence::RgbF32>> {
         let transmittance = (-color.opacity * segment_length).exp();
         Fluence::expr(color.emission * (1.0 - transmittance), transmittance)
     }
@@ -124,12 +128,13 @@ pub struct RgbF16;
 impl ColorType for RgbF16 {
     type Emission = Vec3<f16>;
     type Opacity = Vec3<f16>;
-    type Fluence = fluence::RgbF16;
+}
+impl ToFluence<fluence::RgbF16> for RgbF16 {
     #[tracked]
     fn to_fluence(
         color: Expr<Color<Self>>,
         segment_length: Expr<f32>,
-    ) -> Expr<Fluence<Self::Fluence>> {
+    ) -> Expr<Fluence<fluence::RgbF16>> {
         let transmittance = (-color.opacity * segment_length.cast_f16()).exp();
         Fluence::expr(color.emission * (f16::ONE - transmittance), transmittance)
     }
@@ -140,12 +145,13 @@ pub struct SingleF32;
 impl ColorType for SingleF32 {
     type Emission = f32;
     type Opacity = f32;
-    type Fluence = fluence::SingleF32;
+}
+impl ToFluence<fluence::SingleF32> for SingleF32 {
     #[tracked]
     fn to_fluence(
         color: Expr<Color<Self>>,
         segment_length: Expr<f32>,
-    ) -> Expr<Fluence<Self::Fluence>> {
+    ) -> Expr<Fluence<fluence::SingleF32>> {
         let transmittance = (-color.opacity * segment_length).exp();
         Fluence::expr(color.emission * (1.0 - transmittance), transmittance)
     }
@@ -156,31 +162,29 @@ pub struct BinaryF32;
 impl ColorType for BinaryF32 {
     type Emission = f32;
     type Opacity = bool;
-    type Fluence = fluence::BinaryF32;
-    #[tracked]
-    fn to_fluence(
-        color: Expr<Color<Self>>,
-        _segment_length: Expr<f32>,
-    ) -> Expr<Fluence<Self::Fluence>> {
-        Fluence::expr(
-            color.emission * color.opacity.cast_u32().cast_f32(),
-            !color.opacity,
-        )
-    }
 }
-
-// TODO: Make ColorType<F> instead and implement on the preexisting fluence types?
-#[derive(Debug, Clone, Copy)]
-pub struct BinarySF32;
-impl ColorType for BinarySF32 {
-    type Emission = f32;
-    type Opacity = bool;
-    type Fluence = fluence::SingleF32;
+impl ToFluence<fluence::BinaryF32> for BinaryF32 {
     #[tracked]
     fn to_fluence(
         color: Expr<Color<Self>>,
         segment_length: Expr<f32>,
-    ) -> Expr<Fluence<Self::Fluence>> {
+    ) -> Expr<Fluence<fluence::BinaryF32>> {
+        if segment_length < 0.01 {
+            Fluence::empty().expr()
+        } else {
+            Fluence::expr(
+                color.emission * color.opacity.cast_u32().cast_f32(),
+                !color.opacity,
+            )
+        }
+    }
+}
+impl ToFluence<fluence::SingleF32> for BinaryF32 {
+    #[tracked]
+    fn to_fluence(
+        color: Expr<Color<Self>>,
+        segment_length: Expr<f32>,
+    ) -> Expr<Fluence<fluence::SingleF32>> {
         if segment_length < 0.01 {
             Fluence::empty().expr()
         } else {

@@ -5,7 +5,7 @@ use keter::lang::types::vector::Vec2;
 use keter::prelude::*;
 use keter::runtime::KernelParameter;
 
-use crate::color::{Color, ColorType};
+use crate::color::{Color, ColorType, ToFluence};
 use crate::fluence::{Fluence, FluenceType, PartialTransmittance, Radiance};
 use crate::utils::aabb_intersect;
 use crate::{Axis, Grid, Probe};
@@ -340,7 +340,10 @@ impl<C: ColorType> VoxelTracer<C> {
         }
     }
 }
-impl<C: ColorType> WorldTracer<C::Fluence> for VoxelTracer<C> {
+impl<C: ColorType, F: FluenceType> WorldTracer<F> for VoxelTracer<C>
+where
+    C: ToFluence<F>,
+{
     type Params = ();
     #[tracked]
     fn trace(
@@ -349,7 +352,7 @@ impl<C: ColorType> WorldTracer<C::Fluence> for VoxelTracer<C> {
         start: Expr<Vec2<f32>>,
         ray_dir: Expr<Vec2<f32>>,
         length: Expr<f32>,
-    ) -> Expr<Fluence<C::Fluence>> {
+    ) -> Expr<Fluence<F>> {
         let start = start + Vec2::new(0.163, 0.285);
         let inv_dir = (ray_dir + f32::EPSILON).recip();
         let interval = aabb_intersect(
@@ -362,7 +365,7 @@ impl<C: ColorType> WorldTracer<C::Fluence> for VoxelTracer<C> {
         let ray_start = start + start_t * ray_dir;
         let end_t = keter::min(interval.y, length) - start_t;
         if end_t <= 0.01 {
-            Fluence::<C::Fluence>::empty().expr()
+            Fluence::<F>::empty().expr()
         } else {
             let pos = ray_start.floor().cast_u32().var();
 
@@ -376,7 +379,7 @@ impl<C: ColorType> WorldTracer<C::Fluence> for VoxelTracer<C> {
 
             let last_t = 0.0_f32.var();
 
-            let fluence = Fluence::<C::Fluence>::empty().var();
+            let fluence = Fluence::<F>::empty().var();
 
             loop {
                 let next_t = side_dist.reduce_min();

@@ -16,7 +16,7 @@ const SIZE: u32 = DISPLAY_SIZE / 2;
 const SEGMENTS: u32 = 4 * 2;
 
 type F = fluence::SingleF32;
-type C = color::BinarySF32;
+type C = color::BinaryF32;
 
 fn main() {
     let num_cascades = SIZE.trailing_zeros() as usize;
@@ -159,7 +159,7 @@ fn main() {
 
             let base_fluence = world
                 .read(dispatch_id().x + dispatch_id().y * world_size.x)
-                .to_fluence(0.5.expr())
+                .to_fluence::<F>(0.5.expr())
                 .restrict_angle((PI / 2.0).expr());
 
             let radiance = base_fluence.over_radiance(radiance);
