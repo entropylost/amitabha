@@ -3,7 +3,7 @@ use std::mem::swap;
 
 use amitabha::fluence::BinaryF32;
 use amitabha::storage::{BufferStorage, RadianceStorage};
-use amitabha::trace::{AnalyticCursorTracer, Circle, WorldMapper};
+use amitabha::trace::{AnalyticTracer, Circle, WorldMapper};
 use amitabha::{Axis, Grid, MergeKernelSettings, Probe};
 use keter::lang::types::vector::{Vec2, Vec3};
 use keter::prelude::*;
@@ -29,12 +29,15 @@ fn main() {
         axes: [Axis::CellX, Axis::CellY, Axis::Direction],
     };
 
+    // Prevent dropping.
+    let mut tracers = vec![];
+
     let kernels = rotations.map(|rotation| {
         let tracer = WorldMapper {
-            tracer: AnalyticCursorTracer::<BinaryF32> {
-                circles: vec![
+            tracer: AnalyticTracer::<BinaryF32> {
+                buffer: DEVICE.create_buffer_from_slice(&[
                     Circle {
-                        center: Vec2::new(0.0, 0.0),
+                        center: Vec2::new(25.0, 25.0),
                         radius: 10.0,
                         color: 10.0,
                     },
@@ -43,7 +46,7 @@ fn main() {
                         radius: 10.0,
                         color: 0.0,
                     },
-                ],
+                ]),
             },
             rotation,
             world_origin: Vec2::splat(256.0),
@@ -59,7 +62,9 @@ fn main() {
             _marker: PhantomData::<BinaryF32>,
         };
 
-        settings.build_kernel()
+        let kernel = settings.build_kernel();
+        tracers.push(tracer);
+        kernel
     });
 
     // Coordinates of these points in the world are at (2x + 1, 2y - 2).
@@ -124,7 +129,7 @@ fn main() {
                 swap(&mut buffer_a, &mut buffer_b);
                 let grid = Grid::new(Vec2::new(SIZE >> i, SIZE), 2 << i);
                 kernels[r]
-                    .dispatch(grid, &light_pos, &buffer_a, &buffer_b)
+                    .dispatch(grid, &(), &buffer_a, &buffer_b)
                     .execute();
             }
             finish.dispatch([SIZE, SIZE, 1], &buffer_a);

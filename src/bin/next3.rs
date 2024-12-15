@@ -1,11 +1,15 @@
-use std::f32::consts::PI;
+#![feature(more_float_constants)]
+
+use std::f32::consts::{PHI, PI, TAU};
 use std::marker::PhantomData;
 use std::mem::swap;
 
-use amitabha::color::Color;
+use amitabha::color::{Color, Emission};
 use amitabha::fluence::{self, Fluence, FluenceType};
 use amitabha::storage::BufferStorage;
-use amitabha::trace::{merge_up, SegmentedWorldMapper, StorageTracer, VoxelTracer, WorldSegment};
+use amitabha::trace::{
+    merge_up, SegmentedWorldMapper, StorageTracer, VoxelTracer, WorldSegment, WorldTracer,
+};
 use amitabha::utils::gaussian;
 use amitabha::{color, merge_0, Axis, Grid, MergeKernelSettings, Probe};
 use keter::lang::types::vector::{Vec2, Vec3};
@@ -16,8 +20,8 @@ const DISPLAY_SIZE: u32 = 512;
 const SIZE: u32 = DISPLAY_SIZE / 2;
 const SEGMENTS: u32 = 4 * 2;
 
-type F = fluence::SingleF32;
-type C = color::BinaryF32;
+type F = fluence::RgbF16;
+type C = color::RgbF16;
 
 fn main() {
     let num_cascades = SIZE.trailing_zeros() as usize;
@@ -154,12 +158,12 @@ fn main() {
 
             radiance_texture.write(
                 dispatch_id().xy(),
-                radiance_texture.read(dispatch_id().xy()) + radiance,
+                radiance_texture.read(dispatch_id().xy()) + radiance.cast_f32(),
             );
         }),
     );
 
-    let blur = 0.25;
+    let blur = 0.0; // 0.25
     let delta = 0.05;
 
     let filter = DEVICE.create_kernel::<fn()>(&track!(|| {
@@ -167,7 +171,7 @@ fn main() {
         let value = radiance_texture.read(pos);
         let denom = 0.0.var();
         let numer = Vec3::splat(0.0_f32).var();
-        if world.read(pos.x + pos.y * world_size.x).opacity {
+        if (world.read(pos.x + pos.y * world_size.x).opacity != f16::ZERO).any() {
             app.display().write(pos, value);
             return;
         }
@@ -180,7 +184,10 @@ fn main() {
         ] {
             let pos = (pos.cast_i32() + offset).cast_u32();
             // TODO: Bias surfaces as well, and do more general thing.
-            if (pos < DISPLAY_SIZE).all() && !world.read(pos.x + pos.y * world_size.x).opacity {
+            // Can difference this and other opacity / optical depth?
+            if (pos < DISPLAY_SIZE).all()
+                && (world.read(pos.x + pos.y * world_size.x).opacity == f16::ZERO).any()
+            {
                 let neighbor = radiance_texture.read(pos);
                 let weight = weight * gaussian((neighbor - value).reduce_max() / delta);
                 *numer += neighbor * weight;
@@ -189,8 +196,35 @@ fn main() {
         }
         app.display().write(pos, numer / denom);
     }));
-    let reset_texture = DEVICE.create_kernel::<fn()>(&track!(|| {
-        radiance_texture.write(dispatch_id().xy(), Vec3::splat(0.0));
+    let reset_texture = DEVICE.create_kernel::<fn(Tex2d<Vec3<f32>>)>(&track!(|texture| {
+        texture.write(dispatch_id().xy(), Vec3::splat(0.0));
+    }));
+
+    let pt_texture =
+        DEVICE.create_tex2d::<Vec3<f32>>(PixelStorage::Float4, DISPLAY_SIZE, DISPLAY_SIZE, 1);
+    let mut pt_count = 0;
+    let mut display_pt = false;
+    let path_trace = DEVICE.create_kernel::<fn(u32, u32)>(&track!(|t, n| {
+        let world_pos = dispatch_id().xy().cast_f32() + Vec2::splat(0.5);
+        let total_radiance = Vec3::splat(0.0_f32).var();
+        for i in 0.expr()..n {
+            let dir = ((PHI * (t + i).cast_f32()) % 1.0) * TAU;
+            let dir = Vec2::expr(dir.cos(), dir.sin());
+            let radiance = tracer
+                .tracer
+                .trace(&(), world_pos, dir, (2.0 * DISPLAY_SIZE as f32).expr())
+                .radiance;
+            *total_radiance += radiance.cast_f32();
+        }
+        pt_texture.write(
+            dispatch_id().xy(),
+            pt_texture.read(dispatch_id().xy()) + total_radiance,
+        );
+    }));
+    let draw_pt = DEVICE.create_kernel::<fn(u32)>(&track!(|pt_count| {
+        let pos = dispatch_id().xy();
+        let radiance = pt_texture.read(pos) / pt_count.cast_f32();
+        app.display().write(pos, app.display().read(pos) + radiance);
     }));
 
     let draw_circle =
@@ -203,7 +237,7 @@ fn main() {
 
     let draw_solid = DEVICE.create_kernel::<fn()>(&track!(|| {
         let pos = dispatch_id().xy();
-        if world.read(pos.x + pos.y * world_size.x).opacity {
+        if (world.read(pos.x + pos.y * world_size.x).opacity != f16::ZERO).any() {
             app.display().write(pos, Vec3::expr(1.0, 0.0, 0.0));
         }
     }));
@@ -219,10 +253,7 @@ fn main() {
                 [world_size.x, world_size.y, 1],
                 &rt.cursor_position,
                 &4.0,
-                &Color {
-                    emission: 1.0,
-                    opacity: true,
-                },
+                &Color::solid(Vec3::new(f16::ONE, f16::ZERO, f16::ZERO)),
             );
         }
         if rt.pressed_button(MouseButton::Left) {
@@ -230,10 +261,7 @@ fn main() {
                 [world_size.x, world_size.y, 1],
                 &rt.cursor_position,
                 &4.0,
-                &Color {
-                    emission: 0.0,
-                    opacity: true,
-                },
+                &Color::solid(Vec3::black()),
             );
         }
         if rt.pressed_button(MouseButton::Right) {
@@ -241,10 +269,15 @@ fn main() {
                 [world_size.x, world_size.y, 1],
                 &rt.cursor_position,
                 &4.0,
-                &Color {
-                    emission: 0.0,
-                    opacity: false,
-                },
+                &Color::empty(),
+            );
+        }
+        if rt.pressed_button(MouseButton::Back) {
+            draw_circle.dispatch(
+                [world_size.x, world_size.y, 1],
+                &rt.cursor_position,
+                &4.0,
+                &Color::solid(Vec3::new(f16::ZERO, f16::ONE, f16::ONE)),
             );
         }
 
@@ -311,8 +344,20 @@ fn main() {
             );
         }
 
-        filter.dispatch([DISPLAY_SIZE, DISPLAY_SIZE, 1]);
-        reset_texture.dispatch([DISPLAY_SIZE, DISPLAY_SIZE, 1]);
+        if rt.just_pressed_key(KeyCode::KeyP) {
+            display_pt = !display_pt;
+            pt_count = 0;
+            reset_texture.dispatch([DISPLAY_SIZE, DISPLAY_SIZE, 1], &pt_texture);
+        }
+        if display_pt {
+            let n = 10;
+            path_trace.dispatch([DISPLAY_SIZE, DISPLAY_SIZE, 1], &pt_count, &n);
+            draw_pt.dispatch([DISPLAY_SIZE, DISPLAY_SIZE, 1], &pt_count);
+            pt_count += n;
+        } else {
+            filter.dispatch([DISPLAY_SIZE, DISPLAY_SIZE, 1]);
+        }
+        reset_texture.dispatch([DISPLAY_SIZE, DISPLAY_SIZE, 1], &radiance_texture);
 
         if rt.just_pressed_key(KeyCode::KeyB) {
             display_solid = !display_solid;

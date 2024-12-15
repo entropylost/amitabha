@@ -9,6 +9,20 @@ pub struct Color<C: ColorType> {
     pub emission: C::Emission,
     pub opacity: C::Opacity,
 }
+impl<C: ColorType> Color<C> {
+    pub fn empty() -> Self {
+        Color {
+            emission: C::Emission::black(),
+            opacity: C::Opacity::transparent(),
+        }
+    }
+    pub fn solid(emission: C::Emission) -> Self {
+        Color {
+            emission,
+            opacity: C::Opacity::opaque(),
+        }
+    }
+}
 impl<C: ColorType> ColorExpr<C> {
     pub fn is_transparent(self) -> Expr<bool> {
         C::Opacity::is_transparent(self.opacity)

@@ -301,33 +301,6 @@ impl<F: FluenceType, T: WorldTracer<F>> Tracer<F> for WorldMapper<F, T> {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Circle<R> {
-    pub center: Vec2<f32>,
-    pub radius: f32,
-    pub color: R,
-}
-
-#[tracked]
-fn intersect_circle(
-    ray_start: Expr<Vec2<f32>>,
-    ray_dir: Expr<Vec2<f32>>,
-    radius: Expr<f32>,
-) -> (Expr<f32>, Expr<f32>, Expr<f32>, Expr<bool>) {
-    let dist_to_parallel = -ray_start.dot(ray_dir);
-    let min_point = ray_start + dist_to_parallel * ray_dir;
-    let dist_to_center = min_point.length();
-    let penetration = radius - dist_to_center;
-    if penetration < 0.0.expr() {
-        (0.0.expr(), 0.0.expr(), penetration, false.expr())
-    } else {
-        let dist_to_intersection = (radius.sqr() - dist_to_center.sqr()).sqrt();
-        let min_t = dist_to_parallel - dist_to_intersection;
-        let max_t = dist_to_parallel + dist_to_intersection;
-        (min_t, max_t, penetration, true.expr())
-    }
-}
-
 pub struct VoxelTracer<C: ColorType> {
     pub buffer: Buffer<Color<C>>,
     pub size: Vec2<u32>,
@@ -353,7 +326,7 @@ where
         ray_dir: Expr<Vec2<f32>>,
         length: Expr<f32>,
     ) -> Expr<Fluence<F>> {
-        let start = start + Vec2::new(0.163, 0.285);
+        let start = start + Vec2::new(0.01, 0.01);
         let inv_dir = (ray_dir + f32::EPSILON).recip();
         let interval = aabb_intersect(
             start,
@@ -403,9 +376,36 @@ where
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Value)]
+pub struct Circle<R: Radiance> {
+    pub center: Vec2<f32>,
+    pub radius: f32,
+    pub color: R,
+}
+
+#[tracked]
+fn intersect_circle(
+    ray_start: Expr<Vec2<f32>>,
+    ray_dir: Expr<Vec2<f32>>,
+    radius: Expr<f32>,
+) -> (Expr<f32>, Expr<f32>, Expr<f32>, Expr<bool>) {
+    let dist_to_parallel = -ray_start.dot(ray_dir);
+    let min_point = ray_start + dist_to_parallel * ray_dir;
+    let dist_to_center = min_point.length();
+    let penetration = radius - dist_to_center;
+    if penetration < 0.0.expr() {
+        (0.0.expr(), 0.0.expr(), penetration, false.expr())
+    } else {
+        let dist_to_intersection = (radius.sqr() - dist_to_center.sqr()).sqrt();
+        let min_t = dist_to_parallel - dist_to_intersection;
+        let max_t = dist_to_parallel + dist_to_intersection;
+        (min_t, max_t, penetration, true.expr())
+    }
+}
+
 pub struct AnalyticTracer<F: FluenceType> {
-    pub circles: Vec<Circle<F::Radiance>>,
+    pub buffer: Buffer<Circle<F::Radiance>>,
 }
 
 impl<F: FluenceType> WorldTracer<F> for AnalyticTracer<F> {
@@ -420,64 +420,17 @@ impl<F: FluenceType> WorldTracer<F> for AnalyticTracer<F> {
     ) -> Expr<Fluence<F>> {
         let best_t = end_t.var();
         let best_color = F::Radiance::black().var();
-        for Circle {
-            center,
-            radius,
-            color,
-        } in self.circles.iter()
-        {
-            let (min_t, max_t, penetration, hit) =
-                intersect_circle(start - center, dir, radius.expr());
+        for i in 0_u32.expr()..self.buffer.len_expr_u32() {
+            let circle = self.buffer.read(i);
+            let center = circle.center;
+            let radius = circle.radius;
+            let color = circle.color;
+            let (min_t, max_t, penetration, hit) = intersect_circle(start - center, dir, radius);
             if hit && max_t > 0.0 && min_t < best_t {
                 *best_t = min_t;
                 // TODO: Make this adjustable / always stay at the x-axis size or something.
                 // Also make it part of the opacity instead.
-                *best_color = F::Radiance::scale(color.expr(), keter::min(penetration / 2.0, 1.0));
-            }
-        }
-        if best_t < end_t {
-            Fluence::solid_expr(**best_color)
-        } else {
-            Fluence::empty().expr()
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct AnalyticCursorTracer<F: FluenceType> {
-    pub circles: Vec<Circle<F::Radiance>>,
-}
-
-impl<F: FluenceType> WorldTracer<F> for AnalyticCursorTracer<F> {
-    type Params = Expr<Vec2<f32>>;
-    #[tracked]
-    fn trace(
-        &self,
-        cursor_pos: &Self::Params,
-        start: Expr<Vec2<f32>>,
-        dir: Expr<Vec2<f32>>,
-        end_t: Expr<f32>,
-    ) -> Expr<Fluence<F>> {
-        let best_t = end_t.var();
-        let best_color = F::Radiance::black().var();
-        for Circle {
-            center,
-            radius,
-            color,
-        } in self.circles.iter()
-        {
-            let center = if *center == Vec2::splat(0.0) {
-                *cursor_pos
-            } else {
-                center.expr()
-            };
-            let (min_t, max_t, penetration, hit) =
-                intersect_circle(start - center, dir, radius.expr());
-            if hit && max_t > 0.0 && min_t < best_t {
-                *best_t = min_t;
-                // TODO: Make this adjustable / always stay at the x-axis size or something.
-                // Also make it part of the opacity instead.
-                *best_color = F::Radiance::scale(color.expr(), keter::min(penetration / 2.0, 1.0));
+                *best_color = F::Radiance::scale(color, keter::min(penetration / 2.0, 1.0));
             }
         }
         if best_t < end_t {
