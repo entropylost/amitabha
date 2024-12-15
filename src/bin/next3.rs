@@ -6,6 +6,7 @@ use amitabha::color::Color;
 use amitabha::fluence::{self, Fluence, FluenceType};
 use amitabha::storage::BufferStorage;
 use amitabha::trace::{merge_up, SegmentedWorldMapper, StorageTracer, VoxelTracer, WorldSegment};
+use amitabha::utils::gaussian;
 use amitabha::{color, merge_0, Axis, Grid, MergeKernelSettings, Probe};
 use keter::lang::types::vector::{Vec2, Vec3};
 use keter::prelude::*;
@@ -110,6 +111,9 @@ fn main() {
 
     let kernel = settings.build_kernel();
 
+    let radiance_texture =
+        DEVICE.create_tex2d::<Vec3<f32>>(PixelStorage::Float4, DISPLAY_SIZE, DISPLAY_SIZE, 1);
+
     let draw = DEVICE.create_kernel::<fn(Vec2<i32>, u32, Buffer<<F as FluenceType>::Radiance>)>(
         &track!(|rotation, rotation_index, next_radiance| {
             let cell = dispatch_id().xy().cast_i32();
@@ -126,36 +130,20 @@ fn main() {
 
             let global_y_offset = (2 * SIZE * rotation_index).cast_i32();
 
-            let radiance = if cell.x % 2 == 0 {
-                let offset = if cell.y % 2 == 0 {
-                    0.expr()
-                } else {
-                    SIZE.expr()
-                }
-                .cast_i32();
-                merge_0::<F, _, _>(
-                    next_grid,
-                    Vec2::expr(cell.x / 2, cell.y / 2 + offset + global_y_offset),
-                    (&merge_storage, &next_radiance),
-                    (&tracer, &()),
-                    true,
-                )
+            let offset = if cell.x % 2 == cell.y % 2 {
+                0.expr()
+            } else if cell.y % 2 == 0 {
+                (SIZE - 1).expr()
             } else {
-                let offset = if cell.y % 2 == 0 {
-                    (SIZE - 1).expr()
-                } else {
-                    0.expr()
-                }
-                .cast_i32();
-                // Need to collect from odd cells.
-                merge_0::<F, _, _>(
-                    next_grid,
-                    Vec2::expr(cell.x / 2, cell.y / 2 + offset + global_y_offset),
-                    (&merge_storage, &next_radiance),
-                    (&tracer, &()),
-                    false,
-                )
+                SIZE.expr()
             };
+            let radiance = merge_0::<F, _, _>(
+                next_grid,
+                Vec2::expr(cell.x / 2, cell.y / 2 + offset.cast_i32() + global_y_offset),
+                (&merge_storage, &next_radiance),
+                (&tracer, &()),
+                cell.x % 2 == 0,
+            );
 
             let base_fluence = world
                 .read(dispatch_id().x + dispatch_id().y * world_size.x)
@@ -164,12 +152,44 @@ fn main() {
 
             let radiance = base_fluence.over_radiance(radiance);
 
-            app.display().write(
+            radiance_texture.write(
                 dispatch_id().xy(),
-                app.display().read(dispatch_id().xy()) + radiance,
+                radiance_texture.read(dispatch_id().xy()) + radiance,
             );
         }),
     );
+
+    let blur = 0.25;
+    let delta = 0.05;
+
+    let filter = DEVICE.create_kernel::<fn()>(&track!(|| {
+        let pos = dispatch_id().xy();
+        let value = radiance_texture.read(pos);
+        let denom = 0.0.var();
+        let numer = Vec3::splat(0.0_f32).var();
+        for (offset, weight) in [
+            (Vec2::<i32>::splat(0), 1.0),
+            (Vec2::x(), blur),
+            (Vec2::y(), blur),
+            (-Vec2::x(), blur),
+            (-Vec2::y(), blur),
+        ] {
+            let pos = (pos.cast_i32() + offset).cast_u32();
+            // TODO: Bias surfaces as well.
+            if (pos < DISPLAY_SIZE).all()
+                && (offset == Vec2::splat(0) || !world.read(pos.x + pos.y * world_size.x).opacity)
+            {
+                let neighbor = radiance_texture.read(pos);
+                let weight = weight * gaussian((neighbor - value).reduce_max() / delta);
+                *numer += neighbor * weight;
+                *denom += weight;
+            }
+        }
+        app.display().write(pos, numer / denom);
+    }));
+    let reset_texture = DEVICE.create_kernel::<fn()>(&track!(|| {
+        radiance_texture.write(dispatch_id().xy(), Vec3::splat(0.0));
+    }));
 
     let draw_circle =
         DEVICE.create_kernel::<fn(Vec2<f32>, f32, Color<C>)>(&track!(|center, radius, color| {
@@ -288,6 +308,10 @@ fn main() {
                 &buffer_a,
             );
         }
+
+        filter.dispatch([DISPLAY_SIZE, DISPLAY_SIZE, 1]);
+        reset_texture.dispatch([DISPLAY_SIZE, DISPLAY_SIZE, 1]);
+
         if rt.just_pressed_key(KeyCode::KeyB) {
             display_solid = !display_solid;
         }

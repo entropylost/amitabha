@@ -70,3 +70,8 @@ vec3 SRGBToLinear ( vec3 col )
 pub fn pcg3df(v: Expr<Vec3<u32>>) -> Expr<Vec3<f32>> {
     pcg3d(v).cast_f32() / u32::MAX as f32
 }
+
+#[tracked]
+pub fn gaussian(v: Expr<f32>) -> Expr<f32> {
+    (-v * v).exp()
+}

@@ -17,7 +17,7 @@ pub trait Tracer0<F: FluenceType> {
         params: &Self::Params,
         grid: Expr<Grid>,
         cell: Expr<Vec2<i32>>,
-        even: bool,
+        parity: Expr<bool>,
     ) -> [Expr<Fluence<F>>; 2];
 }
 
@@ -198,13 +198,13 @@ impl<F: FluenceType, T: WorldTracer<F>> Tracer0<F> for SegmentedWorldMapper<F, T
         params: &Self::Params,
         next_grid: Expr<Grid>,
         cell: Expr<Vec2<i32>>,
-        even: bool,
+        parity: Expr<bool>,
     ) -> [Expr<Fluence<F>>; 2] {
         let cell_f = cell.cast_f32()
-            + if even {
-                Vec2::splat(0.0)
+            + if parity {
+                Vec2::splat_expr(0.0)
             } else {
-                Vec2::new(0.5, 0.5)
+                Vec2::expr(0.5, 0.5)
             };
 
         let segment = cell.y.cast_u32() / (next_grid.size.y / self.segments.len() as u32);
@@ -217,7 +217,7 @@ impl<F: FluenceType, T: WorldTracer<F>> Tracer0<F> for SegmentedWorldMapper<F, T
         let lower_offset = Vec2::expr(0.5, -0.5);
         let upper_offset = Vec2::expr(0.5, 0.5);
 
-        let factor = if even { 2.0 } else { 1.0 };
+        let factor = if parity { 2.0.expr() } else { 1.0.expr() };
 
         [
             self.tracer
