@@ -191,11 +191,11 @@ impl<F: FluenceType, T: WorldTracer<F>> Tracer<F> for SegmentedWorldMapper<F, T>
 }
 
 impl<F: FluenceType, T: WorldTracer<F>> Tracer0<F> for SegmentedWorldMapper<F, T> {
-    type Params = T::Params;
+    type Params = (Expr<u32>, T::Params);
     #[tracked]
     fn trace_0(
         &self,
-        params: &Self::Params,
+        (segment, params): &Self::Params,
         next_grid: Expr<Grid>,
         cell: Expr<Vec2<i32>>,
         parity: Expr<bool>,
@@ -207,8 +207,8 @@ impl<F: FluenceType, T: WorldTracer<F>> Tracer0<F> for SegmentedWorldMapper<F, T
                 Vec2::expr(0.5, 0.5)
             };
 
-        let segment = cell.y.cast_u32() / (next_grid.size.y / self.segments.len() as u32);
-        let segment = self.segments.read(segment);
+        // let segment = cell.y.cast_u32() / (next_grid.size.y / self.segments.len() as u32);
+        let segment = self.segments.read(*segment);
 
         let start = self.to_world_f(next_grid, cell_f, segment);
 

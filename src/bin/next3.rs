@@ -55,8 +55,9 @@ fn main() {
             let diag = x_dir + y_dir;
             segments.push(WorldSegment {
                 rotation: r,
-                origin: Vec2::splat(half_size) - half_size * diag // TODO: Why the fuck is this here?
-                    + y_dir * (y_offset as f32 + 0.5),
+                origin: Vec2::splat(half_size) - half_size * diag
+                    + y_dir * (y_offset as f32 + 0.5)
+                    + x_dir * 0.5,
                 size: Vec2::splat(half_size * 2.0),
                 offset: SIZE * segments.len() as u32,
             });
@@ -121,14 +122,25 @@ fn main() {
     let draw = DEVICE.create_kernel::<fn(Vec2<i32>, u32, Buffer<<F as FluenceType>::Radiance>)>(
         &track!(|rotation, rotation_index, next_radiance| {
             let cell = dispatch_id().xy().cast_i32();
-            let cell = cell - Vec2::splat(DISPLAY_SIZE as i32 / 2);
-            let cell = Vec2::expr(
-                cell.x * rotation.x - cell.y * rotation.y,
-                cell.x * rotation.y + cell.y * rotation.x,
-            );
-            let cell = cell + Vec2::splat(DISPLAY_SIZE as i32 / 2);
+
+            let out_cell = {
+                let r = rotation.cast_f32();
+                let half_size = world_size.x as f32 / 2.0;
+                let x_dir = r;
+                let y_dir = Vec2::expr(-r.y, r.x);
+                let diag = x_dir + y_dir;
+                let origin = Vec2::splat(half_size) - half_size * diag + diag * 0.5;
+                let value =
+                    (origin + x_dir * cell.x.cast_f32() + y_dir * cell.y.cast_f32()).floor();
+                let a = (value >= 0.0).all() && (value < DISPLAY_SIZE as f32).all();
+                lc_assert!(a);
+                value.cast_u32()
+            };
 
             let cell = cell + Vec2::x();
+            if cell.x >= DISPLAY_SIZE as i32 {
+                return;
+            }
 
             let next_grid = Grid::new(Vec2::new(SIZE, SEGMENTS * SIZE), 2).expr();
 
@@ -145,25 +157,32 @@ fn main() {
                 next_grid,
                 Vec2::expr(cell.x / 2, cell.y / 2 + offset.cast_i32() + global_y_offset),
                 (&merge_storage, &next_radiance),
-                (&tracer, &()),
+                (
+                    &tracer,
+                    // TODO: This really isn't an elegant way of solving the edge cases, but it works.
+                    &(
+                        2 * rotation_index + (cell.x % 2 != cell.y % 2).cast_u32(),
+                        (),
+                    ),
+                ),
                 cell.x % 2 == 0,
             );
 
             let base_fluence = world
-                .read(dispatch_id().x + dispatch_id().y * world_size.x)
+                .read(out_cell.x + out_cell.y * world_size.x)
                 .to_fluence::<F>(0.5.expr())
                 .restrict_angle((PI / 2.0).expr());
 
             let radiance = base_fluence.over_radiance(radiance);
 
             radiance_texture.write(
-                dispatch_id().xy(),
-                radiance_texture.read(dispatch_id().xy()) + radiance.cast_f32(),
+                out_cell,
+                radiance_texture.read(out_cell) + radiance.cast_f32(),
             );
         }),
     );
 
-    let blur = 0.0; // 0.25
+    let blur = 0.25;
     let delta = 0.05;
 
     let filter = DEVICE.create_kernel::<fn()>(&track!(|| {
@@ -235,6 +254,19 @@ fn main() {
             }
         }));
 
+    draw_circle.dispatch(
+        [world_size.x, world_size.y, 1],
+        &Vec2::new(60.0, 44.0),
+        &4.0,
+        &Color::solid(Vec3::splat(f16::ONE)),
+    );
+    draw_circle.dispatch(
+        [world_size.x, world_size.y, 1],
+        &Vec2::new(80.0, 89.0),
+        &7.0,
+        &Color::solid(Vec3::splat(f16::ZERO)),
+    );
+
     let draw_solid = DEVICE.create_kernel::<fn()>(&track!(|| {
         let pos = dispatch_id().xy();
         if (world.read(pos.x + pos.y * world_size.x).opacity != f16::ZERO).any() {
@@ -285,7 +317,7 @@ fn main() {
             .map(|i| {
                 let grid = Grid::new(Vec2::new(SIZE >> i, SEGMENTS * SIZE), 2 << i);
                 let dispatch_grid = Grid::new(grid.size, grid.directions + 1);
-                if i < 2 {
+                if i < 4 {
                     store_level_kernel.dispatch_async(
                         Axis::dispatch_size(store_axes, dispatch_grid),
                         &grid,
@@ -336,12 +368,7 @@ fn main() {
         }
 
         for (i, r) in rotations.iter().enumerate() {
-            draw.dispatch(
-                [DISPLAY_SIZE, DISPLAY_SIZE, 1],
-                &Vec2::new(r.x, -r.y),
-                &(i as u32),
-                &buffer_a,
-            );
+            draw.dispatch([DISPLAY_SIZE, DISPLAY_SIZE, 1], r, &(i as u32), &buffer_a);
         }
 
         if rt.just_pressed_key(KeyCode::KeyP) {
