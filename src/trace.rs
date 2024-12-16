@@ -219,20 +219,17 @@ impl<F: FluenceType, T: WorldTracer<F>> Tracer0<F> for SegmentedWorldMapper<F, T
 
         let factor = if parity { 2.0.expr() } else { 1.0.expr() };
 
+        let lower = (cell_f + lower_offset * factor).cast_i32();
+        let upper = (cell_f + upper_offset * factor).cast_i32();
+
         [
             self.tracer
-                .trace_to(
-                    params,
-                    start,
-                    self.to_world_f(next_grid, cell_f + lower_offset * factor, segment),
-                )
+                .trace_to(params, start, self.to_world(next_grid, lower, segment))
+                .opaque_if(!self.contains(next_grid, lower, segment))
                 .restrict_angle(lower_size),
             self.tracer
-                .trace_to(
-                    params,
-                    start,
-                    self.to_world_f(next_grid, cell_f + upper_offset * factor, segment),
-                )
+                .trace_to(params, start, self.to_world(next_grid, upper, segment))
+                .opaque_if(!self.contains(next_grid, upper, segment))
                 .restrict_angle(upper_size),
         ]
     }
