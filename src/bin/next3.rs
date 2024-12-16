@@ -16,7 +16,7 @@ use keter::lang::types::vector::{Vec2, Vec3};
 use keter::prelude::*;
 use keter_testbed::{App, KeyCode, MouseButton};
 
-const DISPLAY_SIZE: u32 = 512;
+const DISPLAY_SIZE: u32 = 128;
 const SIZE: u32 = DISPLAY_SIZE / 2;
 const SEGMENTS: u32 = 4 * 2;
 
@@ -28,7 +28,7 @@ fn main() {
 
     let grid_size = [DISPLAY_SIZE; 2];
     let app = App::new("Amitabha", grid_size)
-        .scale(4)
+        .scale(16)
         .dpi(2.0)
         .agx()
         .init();
@@ -55,8 +55,8 @@ fn main() {
             let diag = x_dir + y_dir;
             segments.push(WorldSegment {
                 rotation: r,
-                origin: Vec2::splat(half_size) - half_size * diag + 0.5 * diag - 0.5 * x_dir // TODO: Why the fuck is this here?
-                    + y_dir * y_offset as f32,
+                origin: Vec2::splat(half_size) - half_size * diag // TODO: Why the fuck is this here?
+                    + y_dir * (y_offset as f32 + 0.5),
                 size: Vec2::splat(half_size * 2.0),
                 offset: SIZE * segments.len() as u32,
             });
