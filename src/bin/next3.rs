@@ -16,7 +16,7 @@ use keter::lang::types::vector::{Vec2, Vec3};
 use keter::prelude::*;
 use keter_testbed::{App, KeyCode, MouseButton};
 
-const DISPLAY_SIZE: u32 = 128;
+const DISPLAY_SIZE: u32 = 512;
 const SIZE: u32 = DISPLAY_SIZE / 2;
 const SEGMENTS: u32 = 4 * 2;
 
@@ -28,7 +28,7 @@ fn main() {
 
     let grid_size = [DISPLAY_SIZE; 2];
     let app = App::new("Amitabha", grid_size)
-        .scale(16)
+        .scale(2048 / DISPLAY_SIZE)
         .dpi(2.0)
         .agx()
         .init();
@@ -168,6 +168,7 @@ fn main() {
                 cell.x % 2 == 0,
             );
 
+            // This is still necessary, since the even-line load still is offset by 1.
             let base_fluence = world
                 .read(out_cell.x + out_cell.y * world_size.x)
                 .to_fluence::<F>(0.5.expr())
@@ -253,19 +254,6 @@ fn main() {
                 world.write(pos.x + pos.y * world_size.x, color);
             }
         }));
-
-    draw_circle.dispatch(
-        [world_size.x, world_size.y, 1],
-        &Vec2::new(60.0, 44.0),
-        &4.0,
-        &Color::solid(Vec3::splat(f16::ONE)),
-    );
-    draw_circle.dispatch(
-        [world_size.x, world_size.y, 1],
-        &Vec2::new(80.0, 89.0),
-        &7.0,
-        &Color::solid(Vec3::splat(f16::ZERO)),
-    );
 
     let draw_solid = DEVICE.create_kernel::<fn()>(&track!(|| {
         let pos = dispatch_id().xy();
@@ -377,7 +365,7 @@ fn main() {
             reset_texture.dispatch([DISPLAY_SIZE, DISPLAY_SIZE, 1], &pt_texture);
         }
         if display_pt {
-            let n = 10;
+            let n = 20;
             path_trace.dispatch([DISPLAY_SIZE, DISPLAY_SIZE, 1], &pt_count, &n);
             draw_pt.dispatch([DISPLAY_SIZE, DISPLAY_SIZE, 1], &pt_count);
             pt_count += n;
