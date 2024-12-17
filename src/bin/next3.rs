@@ -2,7 +2,7 @@
 
 use std::f32::consts::{PI, TAU};
 use std::marker::PhantomData;
-use std::mem::swap;
+use std::time::Instant;
 
 use amitabha::color::{Color, Emission};
 use amitabha::fluence::{self, Fluence, FluenceType};
@@ -34,9 +34,9 @@ fn main() {
         .agx()
         .init();
 
-    let mut buffer_a =
+    let buffer_a =
         DEVICE.create_buffer::<<F as FluenceType>::Radiance>((SEGMENTS * SIZE * SIZE * 2) as usize);
-    let mut buffer_b =
+    let buffer_b =
         DEVICE.create_buffer::<<F as FluenceType>::Radiance>((SEGMENTS * SIZE * SIZE * 2) as usize);
 
     let world_size = Vec2::new(DISPLAY_SIZE, DISPLAY_SIZE);
@@ -118,6 +118,8 @@ fn main() {
     let kernel = settings.build_kernel();
 
     let radiance_texture =
+        DEVICE.create_tex2d::<Vec3<f32>>(PixelStorage::Float4, DISPLAY_SIZE, DISPLAY_SIZE, 1);
+    let hrc_radiance =
         DEVICE.create_tex2d::<Vec3<f32>>(PixelStorage::Float4, DISPLAY_SIZE, DISPLAY_SIZE, 1);
 
     let draw = DEVICE.create_kernel::<fn(Vec2<i32>, u32, Buffer<<F as FluenceType>::Radiance>)>(
@@ -220,7 +222,7 @@ fn main() {
         let denom = 0.0.var();
         let numer = Vec3::splat(0.0_f32).var();
         if (world.read(pos.x + pos.y * world_size.x).opacity != f16::ZERO).any() {
-            app.display().write(pos, value);
+            hrc_radiance.write(pos, value);
             return;
         }
         for (offset, weight) in [
@@ -242,16 +244,17 @@ fn main() {
                 *denom += weight;
             }
         }
-        app.display().write(pos, numer / denom);
+        hrc_radiance.write(pos, numer / denom);
     }));
     let reset_texture = DEVICE.create_kernel::<fn(Tex2d<Vec3<f32>>)>(&track!(|texture| {
         texture.write(dispatch_id().xy(), Vec3::splat(0.0));
     }));
 
-    let pt_texture =
+    let pt_sum_texture =
+        DEVICE.create_tex2d::<Vec3<f32>>(PixelStorage::Float4, DISPLAY_SIZE, DISPLAY_SIZE, 1);
+    let pt_radiance =
         DEVICE.create_tex2d::<Vec3<f32>>(PixelStorage::Float4, DISPLAY_SIZE, DISPLAY_SIZE, 1);
     let mut pt_count = 0;
-    let mut display_pt = false;
     let path_trace = DEVICE.create_kernel::<fn(u32, u32)>(&track!(|t, n| {
         let world_pos = dispatch_id().xy().cast_f32() + Vec2::splat(0.5);
         let total_radiance = Vec3::splat(0.0_f32).var();
@@ -267,18 +270,26 @@ fn main() {
                 .radiance;
             *total_radiance += radiance.cast_f32();
         }
-        pt_texture.write(
+        pt_sum_texture.write(
             dispatch_id().xy(),
-            pt_texture.read(dispatch_id().xy()) + total_radiance,
+            pt_sum_texture.read(dispatch_id().xy()) + total_radiance,
         );
     }));
     let draw_pt = DEVICE.create_kernel::<fn(u32)>(&track!(|pt_count| {
         let pos = dispatch_id().xy();
-        let radiance = pt_texture.read(pos) / pt_count.cast_f32();
-        app.display().write(pos, app.display().read(pos) + radiance);
+        let radiance = pt_sum_texture.read(pos) / keter::max(pt_count.cast_f32(), 1.0);
+        pt_radiance.write(pos, radiance);
     }));
 
-    let draw_circle =
+    let compute_difference = DEVICE.create_kernel::<fn(f32)>(&track!(|scale| {
+        let pos = dispatch_id().xy();
+        let a = hrc_radiance.read(pos);
+        let b = pt_radiance.read(pos);
+        let diff = (a - b).abs() * scale;
+        app.display().write(pos, diff);
+    }));
+
+    let apply_brush =
         DEVICE.create_kernel::<fn(Vec2<f32>, f32, Color<C>)>(&track!(|center, radius, color| {
             let pos = dispatch_id().xy();
             if (pos.cast_f32() - center).abs().reduce_max() < radius {
@@ -294,45 +305,48 @@ fn main() {
     }));
 
     let mut display_solid = false;
+    let mut display_pt = false;
+    let mut display_diff = false;
 
     let mut merge_timings = vec![vec![]; num_cascades];
     let mut merge_up_timings = vec![vec![]; num_cascades + 1];
+    let mut last_print_time = Instant::now();
+    let mut last_print_tick = 0;
 
     app.run(|rt, _scope| {
-        if rt.pressed_button(MouseButton::Middle) {
-            draw_circle.dispatch(
-                [world_size.x, world_size.y, 1],
-                &rt.cursor_position,
-                &4.0,
-                &Color::new(
+        let brushes = [
+            (
+                MouseButton::Middle,
+                Color::new(
                     Vec3::new(f16::ONE, f16::ZERO, f16::ZERO),
-                    Vec3::splat(f16::from_f32(0.05)),
+                    Vec3::splat(f16::from_f32(0.5)),
                 ),
-            );
-        }
-        if rt.pressed_button(MouseButton::Left) {
-            draw_circle.dispatch(
-                [world_size.x, world_size.y, 1],
-                &rt.cursor_position,
-                &4.0,
-                &Color::new(Vec3::black(), Vec3::splat(f16::from_f32(0.1))),
-            );
-        }
-        if rt.pressed_button(MouseButton::Right) {
-            draw_circle.dispatch(
-                [world_size.x, world_size.y, 1],
-                &rt.cursor_position,
-                &4.0,
-                &Color::empty(),
-            );
-        }
-        if rt.pressed_button(MouseButton::Back) {
-            draw_circle.dispatch(
-                [world_size.x, world_size.y, 1],
-                &rt.cursor_position,
-                &4.0,
-                &Color::solid(Vec3::new(f16::ZERO, f16::ONE, f16::ONE)),
-            );
+            ),
+            (
+                MouseButton::Left,
+                Color::new(Vec3::black(), Vec3::splat(f16::from_f32(1.0))),
+            ),
+            (MouseButton::Right, Color::empty()),
+            (
+                MouseButton::Back,
+                Color::new(
+                    Vec3::new(f16::ZERO, f16::ONE, f16::ONE),
+                    Vec3::splat(f16::from_f32(0.5)),
+                ),
+            ),
+        ];
+        for brush in brushes {
+            if rt.pressed_button(brush.0) {
+                apply_brush.dispatch(
+                    [world_size.x, world_size.y, 1],
+                    &rt.cursor_position,
+                    &4.0,
+                    &brush.1,
+                );
+
+                pt_count = 0;
+                reset_texture.dispatch([DISPLAY_SIZE, DISPLAY_SIZE, 1], &pt_sum_texture);
+            }
         }
 
         let merge_up_commands = (0..num_cascades + 1)
@@ -406,23 +420,29 @@ fn main() {
         for (i, r) in rotations.iter().enumerate() {
             draw.dispatch([DISPLAY_SIZE, DISPLAY_SIZE, 1], r, &(i as u32), &buffer_a);
         }
+        filter.dispatch([DISPLAY_SIZE, DISPLAY_SIZE, 1]);
+        reset_texture.dispatch([DISPLAY_SIZE, DISPLAY_SIZE, 1], &radiance_texture);
 
+        if rt.pressed_key(KeyCode::Space) {
+            let n = 20;
+            path_trace.dispatch([DISPLAY_SIZE, DISPLAY_SIZE, 1], &pt_count, &n);
+            pt_count += n;
+        }
         if rt.just_pressed_key(KeyCode::KeyP) {
             display_pt = !display_pt;
-            pt_count = 0;
-            reset_texture.dispatch([DISPLAY_SIZE, DISPLAY_SIZE, 1], &pt_texture);
         }
-        if display_pt {
-            let n = 20;
-            if rt.pressed_key(KeyCode::Space) {
-                path_trace.dispatch([DISPLAY_SIZE, DISPLAY_SIZE, 1], &pt_count, &n);
-                pt_count += n;
-            }
-            draw_pt.dispatch([DISPLAY_SIZE, DISPLAY_SIZE, 1], &pt_count);
+        if rt.just_pressed_key(KeyCode::KeyD) {
+            display_diff = !display_diff;
+        }
+        draw_pt.dispatch([DISPLAY_SIZE, DISPLAY_SIZE, 1], &pt_count);
+
+        if display_diff {
+            compute_difference.dispatch([DISPLAY_SIZE, DISPLAY_SIZE, 1], &50.0);
+        } else if display_pt {
+            pt_radiance.view(0).copy_to_texture(&rt.display().view(0));
         } else {
-            filter.dispatch([DISPLAY_SIZE, DISPLAY_SIZE, 1]);
+            hrc_radiance.view(0).copy_to_texture(&rt.display().view(0));
         }
-        reset_texture.dispatch([DISPLAY_SIZE, DISPLAY_SIZE, 1], &radiance_texture);
 
         if rt.just_pressed_key(KeyCode::KeyB) {
             display_solid = !display_solid;
@@ -431,10 +451,13 @@ fn main() {
             draw_solid.dispatch([DISPLAY_SIZE, DISPLAY_SIZE, 1]);
         }
 
-        if rt.tick % 1000 == 0 {
+        if last_print_time.elapsed().as_secs() > 5 {
             let enumerate = false;
 
-            let c = 1000.0;
+            let c = (rt.tick - last_print_tick) as f64;
+            last_print_tick = rt.tick;
+            last_print_time = Instant::now();
+
             println!("Merge Timings:");
             let mut total = 0.0;
             let mut total_variance = 0.0;
