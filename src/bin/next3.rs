@@ -16,7 +16,7 @@ use keter::lang::types::vector::{Vec2, Vec3};
 use keter::prelude::*;
 use keter_testbed::{App, KeyCode, MouseButton};
 
-const DISPLAY_SIZE: u32 = 128;
+const DISPLAY_SIZE: u32 = 512;
 const SIZE: u32 = DISPLAY_SIZE / 2;
 const SEGMENTS: u32 = 4 * 2;
 
@@ -184,7 +184,7 @@ fn main() {
         }),
     );
 
-    let blur = 0.0;
+    let blur = 0.25;
     let delta = 0.05;
 
     let filter = DEVICE.create_kernel::<fn()>(&track!(|| {
@@ -294,19 +294,6 @@ fn main() {
 
     let mut merge_timings = vec![vec![]; num_cascades];
     let mut merge_up_timings = vec![vec![]; num_cascades + 1];
-
-    draw_circle.dispatch(
-        [world_size.x, world_size.y, 1],
-        &Vec2::new(20.0, 20.0),
-        &4.0,
-        &Color::solid(Vec3::splat(f16::ONE)),
-    );
-    draw_circle.dispatch(
-        [world_size.x, world_size.y, 1],
-        &Vec2::new(80.0, 60.0),
-        &4.0,
-        &Color::solid(Vec3::splat(f16::ZERO)),
-    );
 
     app.run(|rt, _scope| {
         if rt.pressed_button(MouseButton::Middle) {
