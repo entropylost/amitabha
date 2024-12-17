@@ -16,7 +16,7 @@ use keter::lang::types::vector::{Vec2, Vec3};
 use keter::prelude::*;
 use keter_testbed::{App, KeyCode, MouseButton};
 
-const DISPLAY_SIZE: u32 = 128;
+const DISPLAY_SIZE: u32 = 512;
 const SIZE: u32 = DISPLAY_SIZE / 2;
 const SEGMENTS: u32 = 4 * 2;
 
@@ -304,7 +304,10 @@ fn main() {
                 [world_size.x, world_size.y, 1],
                 &rt.cursor_position,
                 &4.0,
-                &Color::solid(Vec3::new(f16::ONE, f16::ZERO, f16::ZERO)),
+                &Color::new(
+                    Vec3::new(f16::ONE, f16::ZERO, f16::ZERO),
+                    Vec3::splat(f16::from_f32(0.05)),
+                ),
             );
         }
         if rt.pressed_button(MouseButton::Left) {
@@ -312,7 +315,7 @@ fn main() {
                 [world_size.x, world_size.y, 1],
                 &rt.cursor_position,
                 &4.0,
-                &Color::solid(Vec3::black()),
+                &Color::new(Vec3::black(), Vec3::splat(f16::from_f32(0.1))),
             );
         }
         if rt.pressed_button(MouseButton::Right) {
@@ -336,7 +339,7 @@ fn main() {
             .map(|i| {
                 let grid = Grid::new(Vec2::new(SIZE >> i, SEGMENTS * SIZE), 2 << i);
                 let dispatch_grid = Grid::new(grid.size, grid.directions + 1);
-                if i < 4 {
+                if i < 2 {
                     store_level_kernel.dispatch_async(
                         Axis::dispatch_size(store_axes, dispatch_grid),
                         &grid,
@@ -411,8 +414,10 @@ fn main() {
         }
         if display_pt {
             let n = 20;
-            path_trace.dispatch([DISPLAY_SIZE, DISPLAY_SIZE, 1], &pt_count, &n);
-            pt_count += n;
+            if rt.pressed_key(KeyCode::Space) {
+                path_trace.dispatch([DISPLAY_SIZE, DISPLAY_SIZE, 1], &pt_count, &n);
+                pt_count += n;
+            }
             draw_pt.dispatch([DISPLAY_SIZE, DISPLAY_SIZE, 1], &pt_count);
         } else {
             filter.dispatch([DISPLAY_SIZE, DISPLAY_SIZE, 1]);

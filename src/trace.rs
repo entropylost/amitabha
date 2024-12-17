@@ -357,13 +357,11 @@ where
             loop {
                 let next_t = side_dist.reduce_min();
                 let color = self.buffer.read(pos.x + pos.y * self.size.x);
-                if !color.is_transparent() || next_t >= end_t {
-                    let segment_size = keter::min(next_t, end_t) - last_t;
-                    *fluence = fluence.over(color.to_fluence(segment_size));
-                    *last_t = next_t;
-                    if next_t >= end_t {
-                        break;
-                    }
+                let segment_size = keter::min(next_t, end_t) - last_t;
+                *fluence = fluence.over(color.to_fluence(segment_size));
+                *last_t = next_t;
+                if next_t >= end_t {
+                    break;
                 }
                 let mask = side_dist <= side_dist.yx();
 

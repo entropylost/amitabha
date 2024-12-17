@@ -10,6 +10,9 @@ pub struct Color<C: ColorType> {
     pub opacity: C::Opacity,
 }
 impl<C: ColorType> Color<C> {
+    pub fn new(emission: C::Emission, opacity: C::Opacity) -> Self {
+        Color { emission, opacity }
+    }
     pub fn empty() -> Self {
         Color {
             emission: C::Emission::black(),
