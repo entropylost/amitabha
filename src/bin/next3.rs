@@ -1,6 +1,6 @@
 #![feature(more_float_constants)]
 
-use std::f32::consts::{PHI, PI, TAU};
+use std::f32::consts::{PI, TAU};
 use std::marker::PhantomData;
 use std::mem::swap;
 
@@ -16,7 +16,7 @@ use keter::lang::types::vector::{Vec2, Vec3};
 use keter::prelude::*;
 use keter_testbed::{App, KeyCode, MouseButton};
 
-const DISPLAY_SIZE: u32 = 512;
+const DISPLAY_SIZE: u32 = 128;
 const SIZE: u32 = DISPLAY_SIZE / 2;
 const SEGMENTS: u32 = 4 * 2;
 
@@ -184,8 +184,35 @@ fn main() {
         }),
     );
 
-    let blur = 0.25;
-    let delta = 0.05;
+    let blur = DEVICE.create_kernel::<fn(Grid, f32, Buffer<R>, Buffer<R>)>(&track!(
+        |grid, blur, buffer_x, buffer_y| {
+            let x = dispatch_id().x.cast_i32();
+            let y = dispatch_id().y;
+            let segment = 2 * (y / DISPLAY_SIZE);
+            let y = (y % DISPLAY_SIZE).cast_i32();
+            let dir = dispatch_id().z;
+
+            let get_index = |y: Expr<i32>| {
+                let y = y.clamp(0_i32, DISPLAY_SIZE as i32 - 1);
+                let y = if y % 2 == 0 {
+                    y / 2
+                } else {
+                    y / 2 + SIZE as i32
+                };
+                Probe::expr(Vec2::expr(x, y + (segment * SIZE).cast_i32()), dir)
+            };
+
+            let denom = 2.0 * blur + 1.0;
+            let numer = merge_storage.load(&buffer_x, grid, get_index(y))
+                + blur.cast_f16()
+                    * (merge_storage.load(&buffer_x, grid, get_index(y - 1))
+                        + merge_storage.load(&buffer_x, grid, get_index(y + 1)));
+            merge_storage.store(&buffer_y, grid, get_index(y), numer / denom.cast_f16());
+        }
+    ));
+
+    let final_blur = 0.25;
+    let final_delta = 0.03;
 
     let filter = DEVICE.create_kernel::<fn()>(&track!(|| {
         let pos = dispatch_id().xy();
@@ -198,10 +225,10 @@ fn main() {
         }
         for (offset, weight) in [
             (Vec2::<i32>::splat(0), 1.0),
-            (Vec2::x(), blur),
-            (Vec2::y(), blur),
-            (-Vec2::x(), blur),
-            (-Vec2::y(), blur),
+            (Vec2::x(), final_blur),
+            (Vec2::y(), final_blur),
+            (-Vec2::x(), final_blur),
+            (-Vec2::y(), final_blur),
         ] {
             let pos = (pos.cast_i32() + offset).cast_u32();
             // TODO: Bias surfaces as well, and do more general thing.
@@ -210,7 +237,7 @@ fn main() {
                 && (world.read(pos.x + pos.y * world_size.x).opacity == f16::ZERO).any()
             {
                 let neighbor = radiance_texture.read(pos);
-                let weight = weight * gaussian((neighbor - value).reduce_max() / delta);
+                let weight = weight * gaussian((neighbor - value).reduce_max() / final_delta);
                 *numer += neighbor * weight;
                 *denom += weight;
             }
@@ -229,7 +256,10 @@ fn main() {
         let world_pos = dispatch_id().xy().cast_f32() + Vec2::splat(0.5);
         let total_radiance = Vec3::splat(0.0_f32).var();
         for i in 0.expr()..n {
-            let dir = ((PHI * (t + i).cast_f32()) % 1.0) * TAU;
+            use std::f64::consts::PHI;
+            let max = u32::MAX as f64 + 1.0;
+            let phi = ((PHI * max) % max) as u32;
+            let dir = ((phi * (t + i)).cast_f32() / max as f32) * TAU;
             let dir = Vec2::expr(dir.cos(), dir.sin());
             let radiance = tracer
                 .tracer
@@ -262,33 +292,6 @@ fn main() {
             app.display().write(pos, Vec3::expr(1.0, 0.0, 0.0));
         }
     }));
-
-    let blur = DEVICE.create_kernel::<fn(Grid, f32, Buffer<R>, Buffer<R>)>(&track!(
-        |grid, blur, buffer_x, buffer_y| {
-            let x = dispatch_id().x.cast_i32();
-            let y = dispatch_id().y;
-            let segment = 2 * (y / DISPLAY_SIZE);
-            let y = (y % DISPLAY_SIZE).cast_i32();
-            let dir = dispatch_id().z;
-
-            let get_index = |y: Expr<i32>| {
-                let y = y.clamp(0_i32, DISPLAY_SIZE as i32 - 1);
-                let y = if y % 2 == 0 {
-                    y / 2
-                } else {
-                    y / 2 + SIZE as i32
-                };
-                Probe::expr(Vec2::expr(x, y + (segment * SIZE).cast_i32()), dir)
-            };
-
-            let denom = 2.0 * blur + 1.0;
-            let numer = merge_storage.load(&buffer_x, grid, get_index(y))
-                + blur.cast_f16()
-                    * (merge_storage.load(&buffer_x, grid, get_index(y - 1))
-                        + merge_storage.load(&buffer_x, grid, get_index(y + 1)));
-            merge_storage.store(&buffer_y, grid, get_index(y), numer / denom.cast_f16());
-        }
-    ));
 
     let mut display_solid = false;
 
