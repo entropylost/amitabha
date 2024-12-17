@@ -16,7 +16,7 @@ use keter::lang::types::vector::{Vec2, Vec3};
 use keter::prelude::*;
 use keter_testbed::{App, KeyCode, MouseButton};
 
-const DISPLAY_SIZE: u32 = 512;
+const DISPLAY_SIZE: u32 = 128;
 const SIZE: u32 = DISPLAY_SIZE / 2;
 const SEGMENTS: u32 = 4 * 2;
 
@@ -58,7 +58,7 @@ fn main() {
                 rotation: r,
                 origin: Vec2::splat(half_size) - half_size * diag
                     + y_dir * (y_offset as f32 + 0.5)
-                    + x_dir * 0.5,
+                    + x_dir * 0.501, // Hack to avoid "corner" cases.
                 size: Vec2::splat(half_size * 2.0),
                 offset: SIZE * segments.len() as u32,
             });
@@ -184,7 +184,7 @@ fn main() {
         }),
     );
 
-    let blur = 0.25;
+    let blur = 0.0;
     let delta = 0.05;
 
     let filter = DEVICE.create_kernel::<fn()>(&track!(|| {
@@ -272,7 +272,7 @@ fn main() {
             let dir = dispatch_id().z;
 
             let get_index = |y: Expr<i32>| {
-                let y = y.clamp(0_i32, DISPLAY_SIZE as i32);
+                let y = y.clamp(0_i32, DISPLAY_SIZE as i32 - 1);
                 let y = if y % 2 == 0 {
                     y / 2
                 } else {
@@ -284,8 +284,8 @@ fn main() {
             let denom = 2.0 * blur + 1.0;
             let numer = merge_storage.load(&buffer_x, grid, get_index(y))
                 + blur.cast_f16()
-                    * (merge_storage.load(&buffer_a, grid, get_index(y - 1))
-                        + merge_storage.load(&buffer_a, grid, get_index(y + 1)));
+                    * (merge_storage.load(&buffer_x, grid, get_index(y - 1))
+                        + merge_storage.load(&buffer_x, grid, get_index(y + 1)));
             merge_storage.store(&buffer_y, grid, get_index(y), numer / denom.cast_f16());
         }
     ));
@@ -294,6 +294,19 @@ fn main() {
 
     let mut merge_timings = vec![vec![]; num_cascades];
     let mut merge_up_timings = vec![vec![]; num_cascades + 1];
+
+    draw_circle.dispatch(
+        [world_size.x, world_size.y, 1],
+        &Vec2::new(20.0, 20.0),
+        &4.0,
+        &Color::solid(Vec3::splat(f16::ONE)),
+    );
+    draw_circle.dispatch(
+        [world_size.x, world_size.y, 1],
+        &Vec2::new(80.0, 60.0),
+        &4.0,
+        &Color::solid(Vec3::splat(f16::ZERO)),
+    );
 
     app.run(|rt, _scope| {
         if rt.pressed_button(MouseButton::Middle) {
@@ -360,6 +373,7 @@ fn main() {
         let merge_commands = (0..num_cascades)
             .rev()
             .map(|i| {
+                let blur_factor = 0.5_f32 * 0.75_f32.powi((num_cascades - 1 - i) as i32);
                 // swap(&mut buffer_a, &mut buffer_b);
                 let grid = Grid::new(Vec2::new(SIZE >> i, SEGMENTS * SIZE), 2 << i);
                 (
@@ -378,7 +392,7 @@ fn main() {
                     blur.dispatch_async(
                         [SIZE >> i, SEGMENTS * SIZE, 2 << i],
                         &grid,
-                        &0.1,
+                        &blur_factor,
                         &buffer_b,
                         &buffer_a,
                     )
@@ -408,8 +422,8 @@ fn main() {
         if display_pt {
             let n = 20;
             path_trace.dispatch([DISPLAY_SIZE, DISPLAY_SIZE, 1], &pt_count, &n);
-            draw_pt.dispatch([DISPLAY_SIZE, DISPLAY_SIZE, 1], &pt_count);
             pt_count += n;
+            draw_pt.dispatch([DISPLAY_SIZE, DISPLAY_SIZE, 1], &pt_count);
         } else {
             filter.dispatch([DISPLAY_SIZE, DISPLAY_SIZE, 1]);
         }
