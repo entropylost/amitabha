@@ -6,7 +6,7 @@ use std::mem::swap;
 
 use amitabha::color::{Color, Emission};
 use amitabha::fluence::{self, Fluence, FluenceType};
-use amitabha::storage::BufferStorage;
+use amitabha::storage::{BufferStorage, RadianceStorage};
 use amitabha::trace::{
     merge_up, SegmentedWorldMapper, StorageTracer, VoxelTracer, WorldSegment, WorldTracer,
 };
@@ -21,6 +21,7 @@ const SIZE: u32 = DISPLAY_SIZE / 2;
 const SEGMENTS: u32 = 4 * 2;
 
 type F = fluence::RgbF16;
+type R = <F as FluenceType>::Radiance;
 type C = color::RgbF16;
 
 fn main() {
@@ -262,6 +263,33 @@ fn main() {
         }
     }));
 
+    let blur = DEVICE.create_kernel::<fn(Grid, f32, Buffer<R>, Buffer<R>)>(&track!(
+        |grid, blur, buffer_x, buffer_y| {
+            let x = dispatch_id().x.cast_i32();
+            let y = dispatch_id().y;
+            let segment = 2 * (y / DISPLAY_SIZE);
+            let y = (y % DISPLAY_SIZE).cast_i32();
+            let dir = dispatch_id().z;
+
+            let get_index = |y: Expr<i32>| {
+                let y = y.clamp(0_i32, DISPLAY_SIZE as i32);
+                let y = if y % 2 == 0 {
+                    y / 2
+                } else {
+                    y / 2 + SIZE as i32
+                };
+                Probe::expr(Vec2::expr(x, y + (segment * SIZE).cast_i32()), dir)
+            };
+
+            let denom = 2.0 * blur + 1.0;
+            let numer = merge_storage.load(&buffer_x, grid, get_index(y))
+                + blur.cast_f16()
+                    * (merge_storage.load(&buffer_a, grid, get_index(y - 1))
+                        + merge_storage.load(&buffer_a, grid, get_index(y + 1)));
+            merge_storage.store(&buffer_y, grid, get_index(y), numer / denom.cast_f16());
+        }
+    ));
+
     let mut display_solid = false;
 
     let mut merge_timings = vec![vec![]; num_cascades];
@@ -332,27 +360,40 @@ fn main() {
         let merge_commands = (0..num_cascades)
             .rev()
             .map(|i| {
-                swap(&mut buffer_a, &mut buffer_b);
+                // swap(&mut buffer_a, &mut buffer_b);
                 let grid = Grid::new(Vec2::new(SIZE >> i, SEGMENTS * SIZE), 2 << i);
-                kernel
-                    .dispatch(
-                        grid,
-                        &(
-                            cache_pyramid[i].view(..),
-                            cache_pyramid[i + 1].view(..),
-                            (1 << (i + 1)) as f32,
-                        ),
-                        &buffer_a,
+                (
+                    kernel
+                        .dispatch(
+                            grid,
+                            &(
+                                cache_pyramid[i].view(..),
+                                cache_pyramid[i + 1].view(..),
+                                (1 << (i + 1)) as f32,
+                            ),
+                            &buffer_b,
+                            &buffer_a,
+                        )
+                        .debug(format!("merge-{}", i)),
+                    blur.dispatch_async(
+                        [SIZE >> i, SEGMENTS * SIZE, 2 << i],
+                        &grid,
+                        &0.1,
                         &buffer_b,
+                        &buffer_a,
                     )
-                    .debug(format!("merge-{}", i))
+                    .debug("blur"),
+                )
+                    .chain()
             })
             .collect::<Vec<_>>()
             .chain();
         let timings = merge_commands.execute_timed();
         for (name, time) in timings.iter() {
-            let i = name.split('-').last().unwrap().parse::<usize>().unwrap();
-            merge_timings[i].push(*time as f64);
+            if name != "blur" {
+                let i = name.split('-').last().unwrap().parse::<usize>().unwrap();
+                merge_timings[i].push(*time as f64);
+            }
         }
 
         for (i, r) in rotations.iter().enumerate() {
