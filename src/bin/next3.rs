@@ -10,7 +10,6 @@ use amitabha::storage::{BufferStorage, RadianceStorage};
 use amitabha::trace::{
     merge_up, SegmentedWorldMapper, StorageTracer, VoxelTracer, WorldSegment, WorldTracer,
 };
-use amitabha::utils::gaussian;
 use amitabha::{color, merge_0, Axis, Grid, MergeKernelSettings, Probe};
 use keter::lang::types::vector::{Vec2, Vec3};
 use keter::prelude::*;
@@ -38,6 +37,7 @@ struct Draw {
 struct Scene {
     draws: Vec<Draw>,
 }
+#[allow(dead_code)]
 impl Scene {
     fn penumbra_example(width: f32, height: f32) -> Self {
         let center = Vec2::splat(DISPLAY_SIZE as f32 / 2.0);
@@ -88,9 +88,12 @@ impl Scene {
         let spacing = 15.0;
         let center = Vec2::splat(DISPLAY_SIZE as f32 / 2.0);
         let mut draws = vec![Draw {
-            brush: Brush::Circle(15.1),
+            brush: Brush::Circle(15.0),
             center,
-            color: Color::solid(Vec3::splat(f16::from_f32(5.0))),
+            color: Color::new(
+                Vec3::splat(f16::from_f32(5.0)),
+                Vec3::splat(f16::from_f32(0.5)),
+            ),
         }];
         for i in 6..200 {
             let r = spacing * (i as f32).sqrt();
@@ -104,15 +107,31 @@ impl Scene {
             draws.push(Draw {
                 brush: Brush::Circle(5.0),
                 center: pos,
-                color: Color::new(
-                    Vec3::splat(f16::ZERO),
-                    Vec3::new(
-                        f16::from_f32(color.red.max(0.0)),
-                        f16::from_f32(color.green.max(0.0)),
-                        f16::from_f32(color.blue.max(0.0)),
-                    ),
-                ),
+                color: Color::dark(Vec3::new(
+                    f16::from_f32(color.red.max(0.0)),
+                    f16::from_f32(color.green.max(0.0)),
+                    f16::from_f32(color.blue.max(0.0)),
+                )),
             });
+        }
+        Self { draws }
+    }
+    fn opacitytest() -> Self {
+        let mut draws = vec![Draw {
+            brush: Brush::Circle(15.0),
+            center: Vec2::new(50.0, 256.0),
+            color: Color::new(
+                Vec3::splat(f16::from_f32(5.0)),
+                Vec3::splat(f16::from_f32(0.5)),
+            ),
+        }];
+        for i in 0..50 {
+            let opacity = f16::from_f32(0.01 * i as f32);
+            draws.push(Draw {
+                brush: Brush::Rect(5.0, 2.0),
+                center: Vec2::new(250.0, 200.0 + i as f32 * 2.0),
+                color: Color::dark(Vec3::splat(opacity)),
+            })
         }
         Self { draws }
     }
@@ -310,12 +329,9 @@ fn main() {
     ));
 
     let final_blur = 0.25;
-    let final_delta = 0.03;
-
     let filter = DEVICE.create_kernel::<fn()>(&track!(|| {
         set_block_size([8, 8, 1]);
         let pos = dispatch_id().xy();
-        let value = radiance_texture.read(pos);
         let denom = 0.0.var();
         let numer = Vec3::splat(0.0_f32).var();
         let opacity = world.read(pos.x + pos.y * world_size.x).opacity;
@@ -333,7 +349,6 @@ fn main() {
                 && (world.read(pos.x + pos.y * world_size.x).opacity == opacity).all()
             {
                 let neighbor = radiance_texture.read(pos);
-                let weight = weight * gaussian((neighbor - value).reduce_max() / final_delta);
                 *numer += neighbor * weight;
                 *denom += weight;
             }
@@ -395,7 +410,7 @@ fn main() {
     let rect_brush = DEVICE.create_kernel::<fn(Vec2<f32>, Vec2<f32>, Color<C>)>(&track!(
         |center, size, color| {
             let pos = dispatch_id().xy();
-            if ((pos.cast_f32() - center).abs() < size).all() {
+            if ((pos.cast_f32() + 0.5 - center).abs() < size).all() {
                 world.write(pos.x + pos.y * world_size.x, color);
             }
         }
@@ -403,12 +418,12 @@ fn main() {
     let circle_brush =
         DEVICE.create_kernel::<fn(Vec2<f32>, f32, Color<C>)>(&track!(|center, radius, color| {
             let pos = dispatch_id().xy();
-            if (pos.cast_f32() - center).length() < radius {
+            if (pos.cast_f32() + 0.5 - center).length() < radius {
                 world.write(pos.x + pos.y * world_size.x, color);
             }
         }));
 
-    let scene = Scene::sunflower();
+    let scene = Scene::opacitytest();
     for Draw {
         brush,
         center,
@@ -585,7 +600,7 @@ fn main() {
         }
 
         if last_print_time.elapsed().as_secs() > 5 {
-            let enumerate = true;
+            let enumerate = false;
 
             let c = (rt.tick - last_print_tick) as f64;
             last_print_tick = rt.tick;

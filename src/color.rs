@@ -25,6 +25,12 @@ impl<C: ColorType> Color<C> {
             opacity: C::Opacity::opaque(),
         }
     }
+    pub fn dark(opacity: C::Opacity) -> Self {
+        Color {
+            emission: C::Emission::black(),
+            opacity,
+        }
+    }
 }
 impl<C: ColorType> ColorExpr<C> {
     pub fn is_transparent(self) -> Expr<bool> {
