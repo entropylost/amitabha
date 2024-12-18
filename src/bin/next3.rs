@@ -255,14 +255,14 @@ fn main() {
     let pt_radiance =
         DEVICE.create_tex2d::<Vec3<f32>>(PixelStorage::Float4, DISPLAY_SIZE, DISPLAY_SIZE, 1);
     let mut pt_count = 0;
+    let max_pt_count = 10000;
     let path_trace = DEVICE.create_kernel::<fn(u32, u32)>(&track!(|t, n| {
         let world_pos = dispatch_id().xy().cast_f32() + Vec2::splat(0.5);
         let total_radiance = Vec3::splat(0.0_f32).var();
         for i in 0.expr()..n {
-            use std::f64::consts::PHI;
             let max = u32::MAX as f64 + 1.0;
-            let phi = ((PHI * max) % max) as u32;
-            let dir = ((phi * (t + i)).cast_f32() / max as f32) * TAU;
+            let offset = (max / max_pt_count as f64) as u32; // ((PHI * max) % max) as u32;
+            let dir = ((offset * (t + i)).cast_f32() / max as f32) * TAU;
             let dir = Vec2::expr(dir.cos(), dir.sin());
             let radiance = tracer
                 .tracer
@@ -275,9 +275,9 @@ fn main() {
             pt_sum_texture.read(dispatch_id().xy()) + total_radiance,
         );
     }));
-    let draw_pt = DEVICE.create_kernel::<fn(u32)>(&track!(|pt_count| {
+    let draw_pt = DEVICE.create_kernel::<fn(u32)>(&track!(|_pt_count| {
         let pos = dispatch_id().xy();
-        let radiance = pt_sum_texture.read(pos) / keter::max(pt_count.cast_f32(), 1.0);
+        let radiance = pt_sum_texture.read(pos) / max_pt_count as f32; // keter::max(pt_count.cast_f32(), 1.0);
         pt_radiance.write(pos, radiance);
     }));
 
@@ -318,14 +318,11 @@ fn main() {
             (
                 MouseButton::Middle,
                 Color::new(
-                    Vec3::new(f16::ONE, f16::ZERO, f16::ZERO),
+                    Vec3::new(f16::from_f32(5.0), f16::ZERO, f16::ZERO),
                     Vec3::splat(f16::from_f32(0.5)),
                 ),
             ),
-            (
-                MouseButton::Left,
-                Color::new(Vec3::black(), Vec3::splat(f16::from_f32(1.0))),
-            ),
+            (MouseButton::Left, Color::solid(Vec3::black())),
             (MouseButton::Right, Color::empty()),
             (
                 MouseButton::Back,
@@ -423,7 +420,7 @@ fn main() {
         filter.dispatch([DISPLAY_SIZE, DISPLAY_SIZE, 1]);
         reset_texture.dispatch([DISPLAY_SIZE, DISPLAY_SIZE, 1], &radiance_texture);
 
-        if rt.pressed_key(KeyCode::Space) {
+        if rt.pressed_key(KeyCode::Space) && pt_count < max_pt_count {
             let n = 20;
             path_trace.dispatch([DISPLAY_SIZE, DISPLAY_SIZE, 1], &pt_count, &n);
             pt_count += n;
