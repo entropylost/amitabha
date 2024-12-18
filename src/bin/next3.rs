@@ -343,38 +343,44 @@ fn main() {
     let reset_texture = DEVICE.create_kernel::<fn(Tex2d<Vec3<f32>>)>(&track!(|texture| {
         texture.write(dispatch_id().xy(), Vec3::splat(0.0));
     }));
+    let reset_texture_2 = DEVICE.create_kernel::<fn(Tex2d<Vec3<u32>>)>(&track!(|texture| {
+        texture.write(dispatch_id().xy(), Vec3::splat(0));
+    }));
 
     let pt_sum_texture =
-        DEVICE.create_tex2d::<Vec3<f32>>(PixelStorage::Float4, DISPLAY_SIZE, DISPLAY_SIZE, 1);
+        DEVICE.create_tex2d::<Vec3<u32>>(PixelStorage::Int4, DISPLAY_SIZE, DISPLAY_SIZE, 1);
     let pt_radiance =
         DEVICE.create_tex2d::<Vec3<f32>>(PixelStorage::Float4, DISPLAY_SIZE, DISPLAY_SIZE, 1);
     let mut pt_count = 0;
-    let max_pt_count = 10000;
+    let max_radiance = 16.0 * 8192.0_f64;
+    let max_pt_count = 10946; // Fibonacci number
     let path_trace = DEVICE.create_kernel::<fn(u32, u32)>(&track!(|t, n| {
         set_block_size([8, 8, 1]);
         let world_pos = dispatch_id().xy().cast_f32() + Vec2::splat(0.5);
-        let total_radiance = Vec3::splat(0.0_f32).var();
+        let total_radiance = Vec3::splat(0_u32).var();
         for i in 0.expr()..n {
-            let max = u32::MAX as f64 + 1.0;
             // TODO: Switch back to PHI but use integers. Also change max to 8192?
             // Then switch to using u32 / i32 for the actual storage which gives enough bits.
-            let offset = (max / max_pt_count as f64) as u32; // ((PHI * max) % max) as u32;
-            let dir = ((offset * (t + i)).cast_f32() / max as f32) * TAU;
+            let offset = 6765; // Adjacent fibonacci number.
+            let dir = (((offset * (t + i)) % max_pt_count).cast_f32() / max_pt_count as f32) * TAU;
             let dir = Vec2::expr(dir.cos(), dir.sin());
             let radiance = tracer
                 .tracer
                 .trace(&(), world_pos, dir, (2.0 * DISPLAY_SIZE as f32).expr())
                 .radiance;
-            *total_radiance += radiance.cast_f32();
+            *total_radiance +=
+                (radiance.cast_f32() * ((u32::MAX as f64 + 1.0) / max_radiance) as f32).cast_u32();
         }
         pt_sum_texture.write(
             dispatch_id().xy(),
             pt_sum_texture.read(dispatch_id().xy()) + total_radiance,
         );
     }));
-    let draw_pt = DEVICE.create_kernel::<fn(u32)>(&track!(|_pt_count| {
+    let draw_pt = DEVICE.create_kernel::<fn(u32)>(&track!(|pt_count| {
         let pos = dispatch_id().xy();
-        let radiance = pt_sum_texture.read(pos) / max_pt_count as f32; // keter::max(pt_count.cast_f32(), 1.0);
+        let radiance = pt_sum_texture.read(pos).cast_f32()
+            * (max_radiance / (u32::MAX as f64 + 1.0)) as f32
+            / keter::max(pt_count.cast_f32(), 1.0);
         pt_radiance.write(pos, radiance);
     }));
 
@@ -469,7 +475,7 @@ fn main() {
                 );
 
                 pt_count = 0;
-                reset_texture.dispatch([DISPLAY_SIZE, DISPLAY_SIZE, 1], &pt_sum_texture);
+                reset_texture_2.dispatch([DISPLAY_SIZE, DISPLAY_SIZE, 1], &pt_sum_texture);
             }
         }
 
@@ -548,9 +554,12 @@ fn main() {
         reset_texture.dispatch([DISPLAY_SIZE, DISPLAY_SIZE, 1], &radiance_texture);
 
         if rt.pressed_key(KeyCode::Space) && pt_count < max_pt_count {
-            let n = 20;
+            let n = 26; // Or 13
             path_trace.dispatch([DISPLAY_SIZE, DISPLAY_SIZE, 1], &pt_count, &n);
             pt_count += n;
+            if pt_count == max_pt_count {
+                println!("Path tracing finished");
+            }
         }
         if rt.just_pressed_key(KeyCode::KeyP) {
             display_pt = !display_pt;
