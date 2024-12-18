@@ -65,7 +65,7 @@ impl Scene {
             let angle = i as f32 * 137.508_f32.to_radians();
             let pos = center + Vec2::new(angle.cos(), angle.sin()) * r;
 
-            let brightness = (1.0 - r / 100.0).max(0.0);
+            let brightness = (1.0 - r / 150.0).max(0.0);
             let color = Oklch::new(brightness, 0.15, angle.to_degrees());
             let color = LinSrgb::from_color(color);
 
@@ -78,7 +78,7 @@ impl Scene {
                         f16::from_f32(color.green.max(0.0)),
                         f16::from_f32(color.blue.max(0.0)),
                     ),
-                    Vec3::splat(f16::from_f32(0.3)),
+                    Vec3::splat(f16::from_f32(0.7)),
                 ),
             });
         }
@@ -218,6 +218,7 @@ fn main() {
 
     let draw = DEVICE.create_kernel::<fn(Vec2<i32>, u32, Buffer<<F as FluenceType>::Radiance>)>(
         &track!(|rotation, rotation_index, next_radiance| {
+            set_block_size([2, 32, 2]);
             let cell = dispatch_id().xy().cast_i32();
 
             let out_cell = {
@@ -282,6 +283,7 @@ fn main() {
 
     let blur = DEVICE.create_kernel::<fn(Grid, f32, Buffer<R>, Buffer<R>)>(&track!(
         |grid, blur, buffer_x, buffer_y| {
+            set_block_size([2, 32, 2]);
             let x = dispatch_id().x.cast_i32();
             let y = dispatch_id().y;
             let segment = 2 * (y / DISPLAY_SIZE);
@@ -311,6 +313,7 @@ fn main() {
     let final_delta = 0.03;
 
     let filter = DEVICE.create_kernel::<fn()>(&track!(|| {
+        set_block_size([8, 8, 1]);
         let pos = dispatch_id().xy();
         let value = radiance_texture.read(pos);
         let denom = 0.0.var();
@@ -348,10 +351,13 @@ fn main() {
     let mut pt_count = 0;
     let max_pt_count = 10000;
     let path_trace = DEVICE.create_kernel::<fn(u32, u32)>(&track!(|t, n| {
+        set_block_size([8, 8, 1]);
         let world_pos = dispatch_id().xy().cast_f32() + Vec2::splat(0.5);
         let total_radiance = Vec3::splat(0.0_f32).var();
         for i in 0.expr()..n {
             let max = u32::MAX as f64 + 1.0;
+            // TODO: Switch back to PHI but use integers. Also change max to 8192?
+            // Then switch to using u32 / i32 for the actual storage which gives enough bits.
             let offset = (max / max_pt_count as f64) as u32; // ((PHI * max) % max) as u32;
             let dir = ((offset * (t + i)).cast_f32() / max as f32) * TAU;
             let dir = Vec2::expr(dir.cos(), dir.sin());
@@ -570,7 +576,7 @@ fn main() {
         }
 
         if last_print_time.elapsed().as_secs() > 5 {
-            let enumerate = false;
+            let enumerate = true;
 
             let c = (rt.tick - last_print_tick) as f64;
             last_print_tick = rt.tick;
