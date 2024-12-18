@@ -15,6 +15,7 @@ use amitabha::{color, merge_0, Axis, Grid, MergeKernelSettings, Probe};
 use keter::lang::types::vector::{Vec2, Vec3};
 use keter::prelude::*;
 use keter_testbed::{App, KeyCode, MouseButton};
+use palette::{FromColor, LinSrgb, Oklch};
 
 const DISPLAY_SIZE: u32 = 512;
 const SIZE: u32 = DISPLAY_SIZE / 2;
@@ -23,6 +24,99 @@ const SEGMENTS: u32 = 4 * 2;
 type F = fluence::RgbF16;
 type R = <F as FluenceType>::Radiance;
 type C = color::RgbF16;
+
+enum Brush {
+    Rect(f32, f32),
+    Circle(f32),
+}
+struct Draw {
+    brush: Brush,
+    center: Vec2<f32>,
+    color: Color<C>,
+}
+
+struct Scene {
+    draws: Vec<Draw>,
+}
+impl Scene {
+    fn penumbra_example(width: f32, height: f32) -> Self {
+        let center = Vec2::splat(DISPLAY_SIZE as f32 / 2.0);
+        Self {
+            draws: vec![
+                Draw {
+                    brush: Brush::Rect(1.0, height),
+                    center: center + Vec2::y() * height,
+                    color: Color::solid(R::black()),
+                },
+                Draw {
+                    brush: Brush::Rect(1.0, height),
+                    center: center - Vec2::x() * width,
+                    color: Color::solid(Vec3::splat(f16::from_f32(5.0))),
+                },
+            ],
+        }
+    }
+    fn sunflower() -> Self {
+        let spacing = 15.0;
+        let center = Vec2::splat(DISPLAY_SIZE as f32 / 2.0);
+        let mut draws = vec![];
+        for i in 1..200 {
+            let r = spacing * (i as f32).sqrt();
+            let angle = i as f32 * 137.508_f32.to_radians();
+            let pos = center + Vec2::new(angle.cos(), angle.sin()) * r;
+
+            let brightness = (1.0 - r / 100.0).max(0.0);
+            let color = Oklch::new(brightness, 0.15, angle.to_degrees());
+            let color = LinSrgb::from_color(color);
+
+            draws.push(Draw {
+                brush: Brush::Circle(5.0),
+                center: pos,
+                color: Color::new(
+                    Vec3::new(
+                        f16::from_f32(color.red.max(0.0)),
+                        f16::from_f32(color.green.max(0.0)),
+                        f16::from_f32(color.blue.max(0.0)),
+                    ),
+                    Vec3::splat(f16::from_f32(0.3)),
+                ),
+            });
+        }
+        Self { draws }
+    }
+    fn sunflower2() -> Self {
+        let spacing = 15.0;
+        let center = Vec2::splat(DISPLAY_SIZE as f32 / 2.0);
+        let mut draws = vec![Draw {
+            brush: Brush::Circle(15.1),
+            center,
+            color: Color::solid(Vec3::splat(f16::from_f32(5.0))),
+        }];
+        for i in 6..200 {
+            let r = spacing * (i as f32).sqrt();
+            let angle = i as f32 * 137.508_f32.to_radians();
+            let pos = center + Vec2::new(angle.cos(), angle.sin()) * r;
+
+            let brightness = (r / 200.0).max(0.5);
+            let color = Oklch::new(brightness, 0.15, angle.to_degrees());
+            let color = LinSrgb::from_color(color);
+
+            draws.push(Draw {
+                brush: Brush::Circle(5.0),
+                center: pos,
+                color: Color::new(
+                    Vec3::splat(f16::ZERO),
+                    Vec3::new(
+                        f16::from_f32(color.red.max(0.0)),
+                        f16::from_f32(color.green.max(0.0)),
+                        f16::from_f32(color.blue.max(0.0)),
+                    ),
+                ),
+            });
+        }
+        Self { draws }
+    }
+}
 
 fn main() {
     let num_cascades = SIZE.trailing_zeros() as usize;
@@ -221,10 +315,7 @@ fn main() {
         let value = radiance_texture.read(pos);
         let denom = 0.0.var();
         let numer = Vec3::splat(0.0_f32).var();
-        if (world.read(pos.x + pos.y * world_size.x).opacity != f16::ZERO).any() {
-            hrc_radiance.write(pos, value);
-            return;
-        }
+        let opacity = world.read(pos.x + pos.y * world_size.x).opacity;
         for (offset, weight) in [
             (Vec2::<i32>::splat(0), 1.0),
             (Vec2::x(), final_blur),
@@ -236,7 +327,7 @@ fn main() {
             // TODO: Bias surfaces as well, and do more general thing.
             // Can difference this and other opacity / optical depth?
             if (pos < DISPLAY_SIZE).all()
-                && (world.read(pos.x + pos.y * world_size.x).opacity == f16::ZERO).any()
+                && (world.read(pos.x + pos.y * world_size.x).opacity == opacity).all()
             {
                 let neighbor = radiance_texture.read(pos);
                 let weight = weight * gaussian((neighbor - value).reduce_max() / final_delta);
@@ -289,13 +380,43 @@ fn main() {
         app.display().write(pos, diff);
     }));
 
-    let apply_brush =
+    let rect_brush = DEVICE.create_kernel::<fn(Vec2<f32>, Vec2<f32>, Color<C>)>(&track!(
+        |center, size, color| {
+            let pos = dispatch_id().xy();
+            if ((pos.cast_f32() - center).abs() < size).all() {
+                world.write(pos.x + pos.y * world_size.x, color);
+            }
+        }
+    ));
+    let circle_brush =
         DEVICE.create_kernel::<fn(Vec2<f32>, f32, Color<C>)>(&track!(|center, radius, color| {
             let pos = dispatch_id().xy();
-            if (pos.cast_f32() - center).abs().reduce_max() < radius {
+            if (pos.cast_f32() - center).length() < radius {
                 world.write(pos.x + pos.y * world_size.x, color);
             }
         }));
+
+    let scene = Scene::sunflower();
+    for Draw {
+        brush,
+        center,
+        color,
+    } in scene.draws
+    {
+        match brush {
+            Brush::Rect(width, height) => {
+                rect_brush.dispatch(
+                    [world_size.x, world_size.y, 1],
+                    &center,
+                    &Vec2::new(width, height),
+                    &color,
+                );
+            }
+            Brush::Circle(radius) => {
+                circle_brush.dispatch([world_size.x, world_size.y, 1], &center, &radius, &color);
+            }
+        }
+    }
 
     let draw_solid = DEVICE.create_kernel::<fn()>(&track!(|| {
         let pos = dispatch_id().xy();
@@ -334,10 +455,10 @@ fn main() {
         ];
         for brush in brushes {
             if rt.pressed_button(brush.0) {
-                apply_brush.dispatch(
+                rect_brush.dispatch(
                     [world_size.x, world_size.y, 1],
                     &rt.cursor_position,
-                    &4.0,
+                    &Vec2::new(2.0, 2.0),
                     &brush.1,
                 );
 
@@ -455,10 +576,10 @@ fn main() {
             last_print_tick = rt.tick;
             last_print_time = Instant::now();
 
-            println!("Merge Timings:");
+            println!("Merge Up Timings:");
             let mut total = 0.0;
             let mut total_variance = 0.0;
-            for (i, timings) in merge_timings.iter_mut().enumerate() {
+            for (i, timings) in merge_up_timings.iter_mut().enumerate() {
                 let avg = timings.iter().sum::<f64>() / c;
                 total += avg;
                 let variance = timings.iter().map(|t| (t - avg).powi(2)).sum::<f64>() / c;
@@ -470,10 +591,10 @@ fn main() {
             }
             println!("Total: {:.3}ms, sd {:.3}ms", total, total_variance.sqrt());
 
-            println!("Merge Up Timings:");
+            println!("Merge Timings:");
             let mut total = 0.0;
             let mut total_variance = 0.0;
-            for (i, timings) in merge_up_timings.iter_mut().enumerate() {
+            for (i, timings) in merge_timings.iter_mut().enumerate() {
                 let avg = timings.iter().sum::<f64>() / c;
                 total += avg;
                 let variance = timings.iter().map(|t| (t - avg).powi(2)).sum::<f64>() / c;
