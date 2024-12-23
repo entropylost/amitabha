@@ -135,6 +135,25 @@ impl Scene {
         }
         Self { draws }
     }
+    fn simple() -> Self {
+        Self {
+            draws: vec![
+                Draw {
+                    brush: Brush::Circle(5.0),
+                    center: Vec2::new(30.0, 256.0),
+                    color: Color::new(
+                        Vec3::splat(f16::from_f32(5.0)),
+                        Vec3::splat(f16::from_f32(0.5)),
+                    ),
+                },
+                Draw {
+                    brush: Brush::Circle(7.0),
+                    center: Vec2::new(300.0, 256.0),
+                    color: Color::dark(Vec3::splat(f16::from_f32(0.5))),
+                },
+            ],
+        }
+    }
 }
 
 fn main() {
@@ -170,7 +189,7 @@ fn main() {
             segments.push(WorldSegment {
                 rotation: r,
                 origin: Vec2::splat(half_size) - half_size * diag
-                    + y_dir * (y_offset as f32 + 0.5)
+                    + y_dir * (y_offset as f32 + 0.499)
                     + x_dir * 0.501, // Hack to avoid "corner" cases.
                 size: Vec2::splat(half_size * 2.0),
                 offset: SIZE * segments.len() as u32,
@@ -319,18 +338,25 @@ fn main() {
                 Probe::expr(Vec2::expr(x, y + (segment * SIZE).cast_i32()), dir)
             };
 
-            let denom = 2.0 * blur + 1.0;
-            let numer = merge_storage.load(&buffer_x, grid, get_index(y))
-                + blur.cast_f16()
-                    * (merge_storage.load(&buffer_x, grid, get_index(y - 1))
-                        + merge_storage.load(&buffer_x, grid, get_index(y + 1)));
-            merge_storage.store(&buffer_y, grid, get_index(y), numer / denom.cast_f16());
+            merge_storage.store(
+                &buffer_y,
+                grid,
+                get_index(y),
+                (1.0 - 2.0 * blur).cast_f16() * merge_storage.load(&buffer_x, grid, get_index(y))
+                    + blur.cast_f16()
+                        * (merge_storage.load(&buffer_x, grid, get_index(y - 1))
+                            + merge_storage.load(&buffer_x, grid, get_index(y + 1))),
+            );
         }
     ));
 
-    let final_blur = 0.25;
+    // TODO: This should be done per-direction instead?
+    // Also this doesn't seem to be balanced since the denom can change.
     let filter = DEVICE.create_kernel::<fn()>(&track!(|| {
         set_block_size([8, 8, 1]);
+
+        let final_blur = 0.0; // 0.25;
+
         let pos = dispatch_id().xy();
         let denom = 0.0.var();
         let numer = Vec3::splat(0.0_f32).var();
@@ -399,11 +425,15 @@ fn main() {
         pt_radiance.write(pos, radiance);
     }));
 
+    let radiance_diff =
+        DEVICE.create_tex2d::<f32>(PixelStorage::Float1, DISPLAY_SIZE, DISPLAY_SIZE, 1);
+
     let compute_difference = DEVICE.create_kernel::<fn(f32)>(&track!(|scale| {
         let pos = dispatch_id().xy();
         let a = hrc_radiance.read(pos);
         let b = pt_radiance.read(pos);
         let diff = (a - b).abs() * scale;
+        radiance_diff.write(pos, (a - b).abs().reduce_max());
         app.display().write(pos, diff);
     }));
 
@@ -423,7 +453,7 @@ fn main() {
             }
         }));
 
-    let scene = Scene::opacitytest();
+    let scene = Scene::simple();
     for Draw {
         brush,
         center,
@@ -586,8 +616,16 @@ fn main() {
 
         if display_diff {
             compute_difference.dispatch([DISPLAY_SIZE, DISPLAY_SIZE, 1], &50.0);
+            if rt.tick % 100 == 0 {
+                let diff = radiance_diff.view(0).copy_to_vec::<f32>();
+                let mse = diff.iter().map(|x| (*x as f64).powi(2)).sum::<f64>() / diff.len() as f64;
+                println!("Error: {}", mse.sqrt());
+            }
         } else if display_pt {
             pt_radiance.view(0).copy_to_texture(&rt.display().view(0));
+            // if last_print_time.elapsed().as_secs() > 5 {
+            //     println!("Paths: {:?}", pt_count);
+            // }
         } else {
             hrc_radiance.view(0).copy_to_texture(&rt.display().view(0));
         }
