@@ -14,7 +14,6 @@ use amitabha::{color, merge_0, Axis, Grid, MergeKernelSettings, Probe};
 use keter::lang::types::vector::{Vec2, Vec3};
 use keter::prelude::*;
 use keter_testbed::{App, KeyCode, MouseButton};
-use palette::{FromColor, LinSrgb, Oklch};
 
 const DISPLAY_SIZE: u32 = 512;
 const SIZE: u32 = DISPLAY_SIZE / 2;
@@ -24,137 +23,8 @@ type F = fluence::RgbF16;
 type R = <F as FluenceType>::Radiance;
 type C = color::RgbF16;
 
-enum Brush {
-    Rect(f32, f32),
-    Circle(f32),
-}
-struct Draw {
-    brush: Brush,
-    center: Vec2<f32>,
-    color: Color<C>,
-}
-
-struct Scene {
-    draws: Vec<Draw>,
-}
-#[allow(dead_code)]
-impl Scene {
-    fn penumbra_example(width: f32, height: f32) -> Self {
-        let center = Vec2::splat(DISPLAY_SIZE as f32 / 2.0);
-        Self {
-            draws: vec![
-                Draw {
-                    brush: Brush::Rect(1.0, height),
-                    center: center + Vec2::y() * height,
-                    color: Color::solid(R::black()),
-                },
-                Draw {
-                    brush: Brush::Rect(1.0, height),
-                    center: center - Vec2::x() * width,
-                    color: Color::solid(Vec3::splat(f16::from_f32(5.0))),
-                },
-            ],
-        }
-    }
-    fn sunflower() -> Self {
-        let spacing = 15.0;
-        let center = Vec2::splat(DISPLAY_SIZE as f32 / 2.0);
-        let mut draws = vec![];
-        for i in 1..200 {
-            let r = spacing * (i as f32).sqrt();
-            let angle = i as f32 * 137.508_f32.to_radians();
-            let pos = center + Vec2::new(angle.cos(), angle.sin()) * r;
-
-            let brightness = (1.0 - r / 150.0).max(0.0);
-            let color = Oklch::new(brightness, 0.15, angle.to_degrees());
-            let color = LinSrgb::from_color(color);
-
-            draws.push(Draw {
-                brush: Brush::Circle(5.0),
-                center: pos,
-                color: Color::new(
-                    Vec3::new(
-                        f16::from_f32(color.red.max(0.0)),
-                        f16::from_f32(color.green.max(0.0)),
-                        f16::from_f32(color.blue.max(0.0)),
-                    ),
-                    Vec3::splat(f16::from_f32(0.7)),
-                ),
-            });
-        }
-        Self { draws }
-    }
-    fn sunflower2() -> Self {
-        let spacing = 15.0;
-        let center = Vec2::splat(DISPLAY_SIZE as f32 / 2.0);
-        let mut draws = vec![Draw {
-            brush: Brush::Circle(15.0),
-            center,
-            color: Color::new(
-                Vec3::splat(f16::from_f32(5.0)),
-                Vec3::splat(f16::from_f32(0.5)),
-            ),
-        }];
-        for i in 6..200 {
-            let r = spacing * (i as f32).sqrt();
-            let angle = i as f32 * 137.508_f32.to_radians();
-            let pos = center + Vec2::new(angle.cos(), angle.sin()) * r;
-
-            let brightness = (r / 200.0).max(0.5);
-            let color = Oklch::new(brightness, 0.15, angle.to_degrees());
-            let color = LinSrgb::from_color(color);
-
-            draws.push(Draw {
-                brush: Brush::Circle(5.0),
-                center: pos,
-                color: Color::dark(Vec3::new(
-                    f16::from_f32(color.red.max(0.0)),
-                    f16::from_f32(color.green.max(0.0)),
-                    f16::from_f32(color.blue.max(0.0)),
-                )),
-            });
-        }
-        Self { draws }
-    }
-    fn opacitytest() -> Self {
-        let mut draws = vec![Draw {
-            brush: Brush::Circle(15.0),
-            center: Vec2::new(50.0, 256.0),
-            color: Color::new(
-                Vec3::splat(f16::from_f32(5.0)),
-                Vec3::splat(f16::from_f32(0.5)),
-            ),
-        }];
-        for i in 0..50 {
-            let opacity = f16::from_f32(0.01 * i as f32);
-            draws.push(Draw {
-                brush: Brush::Rect(5.0, 2.0),
-                center: Vec2::new(250.0, 200.0 + i as f32 * 2.0),
-                color: Color::dark(Vec3::splat(opacity)),
-            })
-        }
-        Self { draws }
-    }
-    fn simple() -> Self {
-        Self {
-            draws: vec![
-                Draw {
-                    brush: Brush::Circle(5.0),
-                    center: Vec2::new(30.0, 256.0),
-                    color: Color::new(
-                        Vec3::splat(f16::from_f32(5.0)),
-                        Vec3::splat(f16::from_f32(0.5)),
-                    ),
-                },
-                Draw {
-                    brush: Brush::Circle(7.0),
-                    center: Vec2::new(300.0, 256.0),
-                    color: Color::dark(Vec3::splat(f16::from_f32(0.5))),
-                },
-            ],
-        }
-    }
-}
+mod scene;
+use scene::*;
 
 fn main() {
     let num_cascades = SIZE.trailing_zeros() as usize;
@@ -355,7 +225,7 @@ fn main() {
     let filter = DEVICE.create_kernel::<fn()>(&track!(|| {
         set_block_size([8, 8, 1]);
 
-        let final_blur = 0.0; // 0.25;
+        let final_blur = 0.25;
 
         let pos = dispatch_id().xy();
         let denom = 0.0.var();
@@ -453,28 +323,72 @@ fn main() {
             }
         }));
 
-    let scene = Scene::simple();
-    for Draw {
-        brush,
-        center,
-        color,
-    } in scene.draws
-    {
-        match brush {
-            Brush::Rect(width, height) => {
-                rect_brush.dispatch(
-                    [world_size.x, world_size.y, 1],
-                    &center,
-                    &Vec2::new(width, height),
-                    &color,
-                );
-            }
-            Brush::Circle(radius) => {
-                circle_brush.dispatch([world_size.x, world_size.y, 1], &center, &radius, &color);
+    let julia = DEVICE.create_kernel::<fn()>(&track!(|| {
+        let c = Vec2::<f32>::new(-0.73, 0.2);
+        let r = 2.0;
+        assert!(r * r - r >= (c.x * c.x + c.y * c.y).sqrt());
+
+        let pos = dispatch_id().xy().cast_f32() + 0.5;
+        let pos = 2.0 * ((pos / dispatch_size().xy().cast_f32()) - 0.5) * r;
+        let z = pos.var();
+
+        let iter = u32::MAX.var();
+        for i in 0_u32..1000 {
+            *z = Vec2::expr(z.x * z.x - z.y * z.y, 2.0 * z.x * z.y) + c;
+            if z.length() > r {
+                *iter = i;
+                break;
             }
         }
-    }
+        let color = if iter >= 100 {
+            let iter = keter::min(iter, 1000);
+            let k = iter.cast_f32() / 500.0;
+            let j = iter.cast_f32() / 200.0;
+            Color::expr(
+                Vec3::<f32>::splat_expr(0.0).cast_f16(),
+                Vec3::<f32>::splat_expr(j * 0.05).cast_f16(),
+            )
+        } else {
+            let k = keter::max(iter.cast_f32() - 200.0, 0.0) / 500.0;
+            let j = iter.cast_f32() / 200.0;
+            Color::expr(
+                Vec3::<f32>::splat_expr(0.0).cast_f16(),
+                Vec3::<f32>::splat_expr(j * 0.05).cast_f16(),
+            )
+        };
+        world.write(dispatch_id().x + dispatch_id().y * world_size.x, color);
+    }));
 
+    julia.dispatch_blocking([world_size.x, world_size.y, 1]);
+
+    /*
+        let scene = Scene::sunflower();
+        for Draw {
+            brush,
+            center,
+            color,
+        } in scene.draws
+        {
+            match brush {
+                Brush::Rect(width, height) => {
+                    rect_brush.dispatch(
+                        [world_size.x, world_size.y, 1],
+                        &center,
+                        &Vec2::new(width, height),
+                        &Color::from(color),
+                    );
+                }
+                Brush::Circle(radius) => {
+                    circle_brush.dispatch(
+                        [world_size.x, world_size.y, 1],
+                        &center,
+                        &radius,
+                        &Color::from(color),
+                    );
+                }
+            }
+        }
+    */
     let draw_solid = DEVICE.create_kernel::<fn()>(&track!(|| {
         let pos = dispatch_id().xy();
         if (world.read(pos.x + pos.y * world_size.x).opacity != f16::ZERO).any() {

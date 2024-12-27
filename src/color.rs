@@ -10,6 +10,10 @@ pub struct Color<C: ColorType> {
     pub opacity: C::Opacity,
 }
 impl<C: ColorType> Color<C> {
+    #[tracked]
+    pub fn expr(emission: Expr<C::Emission>, opacity: Expr<C::Opacity>) -> Expr<Self> {
+        Color::from_comps_expr(ColorComps { emission, opacity })
+    }
     pub fn new(emission: C::Emission, opacity: C::Opacity) -> Self {
         Color { emission, opacity }
     }

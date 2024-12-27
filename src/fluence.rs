@@ -10,7 +10,6 @@ pub struct Fluence<F: FluenceType> {
     pub transmittance: F::Transmittance,
 }
 impl<F: FluenceType> Fluence<F> {
-    #[tracked]
     pub fn expr(radiance: Expr<F::Radiance>, transmittance: Expr<F::Transmittance>) -> Expr<Self> {
         Fluence::from_comps_expr(FluenceComps {
             radiance,
