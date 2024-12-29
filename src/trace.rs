@@ -331,8 +331,8 @@ where
         let interval = aabb_intersect(
             start,
             inv_dir,
-            Vec2::splat(0.01).expr(),
-            self.size.expr().cast_f32() - Vec2::splat(0.01).expr(),
+            Vec2::splat(0.1).expr(),
+            self.size.expr().cast_f32() - Vec2::splat(0.1).expr(),
         );
         let start_t = keter::max(interval.x, 0.0);
         let ray_start = start + start_t * ray_dir;

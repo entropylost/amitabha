@@ -15,7 +15,7 @@ use keter::lang::types::vector::{Vec2, Vec3};
 use keter::prelude::*;
 use keter_testbed::{App, KeyCode, MouseButton};
 
-const DISPLAY_SIZE: u32 = 512;
+const DISPLAY_SIZE: u32 = 1024;
 const SIZE: u32 = DISPLAY_SIZE / 2;
 const SEGMENTS: u32 = 4 * 2;
 
@@ -274,6 +274,13 @@ fn main() {
             // Then switch to using u32 / i32 for the actual storage which gives enough bits.
             let offset = 6765; // Adjacent fibonacci number.
             let dir = (((offset * (t + i)) % max_pt_count).cast_f32() / max_pt_count as f32) * TAU;
+            let del = world_pos - Vec2::splat(DISPLAY_SIZE as f32 / 2.0);
+            let r = del.length();
+            let theta = del.y.atan2(del.x);
+            // let dir =
+            //     TAU * amitabha::utils::pcgf(dispatch_id().x + (dispatch_id().y << 10) + (t << 20));
+            // let dir = dir + theta + amitabha::utils::pcgf((r / 1.5).cast_u32()) * TAU;
+            // let dir = dir + amitabha::utils::pcgf(dispatch_id().x + (dispatch_id().y << 16)) * TAU;
             let dir = Vec2::expr(dir.cos(), dir.sin());
             let radiance = tracer
                 .tracer
@@ -345,50 +352,49 @@ fn main() {
             let k = iter.cast_f32() / 500.0;
             let j = iter.cast_f32() / 200.0;
             Color::expr(
-                Vec3::<f32>::splat_expr(0.0).cast_f16(),
-                Vec3::<f32>::splat_expr(j * 0.05).cast_f16(),
+                Vec3::<f32>::expr(0.0, 0.0, keter::max(k - 0.3, 0.0)).cast_f16(),
+                Vec3::<f32>::splat_expr(0.2).cast_f16(),
             )
         } else {
             let k = keter::max(iter.cast_f32() - 200.0, 0.0) / 500.0;
             let j = iter.cast_f32() / 200.0;
             Color::expr(
                 Vec3::<f32>::splat_expr(0.0).cast_f16(),
-                Vec3::<f32>::splat_expr(j * 0.05).cast_f16(),
+                Vec3::<f32>::splat_expr(0.0).cast_f16(),
             )
         };
         world.write(dispatch_id().x + dispatch_id().y * world_size.x, color);
     }));
 
-    julia.dispatch_blocking([world_size.x, world_size.y, 1]);
+    // julia.dispatch_blocking([world_size.x, world_size.y, 1]);
 
-    /*
-        let scene = Scene::sunflower();
-        for Draw {
-            brush,
-            center,
-            color,
-        } in scene.draws
-        {
-            match brush {
-                Brush::Rect(width, height) => {
-                    rect_brush.dispatch(
-                        [world_size.x, world_size.y, 1],
-                        &center,
-                        &Vec2::new(width, height),
-                        &Color::from(color),
-                    );
-                }
-                Brush::Circle(radius) => {
-                    circle_brush.dispatch(
-                        [world_size.x, world_size.y, 1],
-                        &center,
-                        &radius,
-                        &Color::from(color),
-                    );
-                }
+    let scene = Scene::sunflower4();
+    for Draw {
+        brush,
+        center,
+        color,
+    } in scene.draws
+    {
+        match brush {
+            Brush::Rect(width, height) => {
+                rect_brush.dispatch(
+                    [world_size.x, world_size.y, 1],
+                    &center,
+                    &Vec2::new(width, height),
+                    &Color::from(color),
+                );
+            }
+            Brush::Circle(radius) => {
+                circle_brush.dispatch(
+                    [world_size.x, world_size.y, 1],
+                    &center,
+                    &radius,
+                    &Color::from(color),
+                );
             }
         }
-    */
+    }
+
     let draw_solid = DEVICE.create_kernel::<fn()>(&track!(|| {
         let pos = dispatch_id().xy();
         if (world.read(pos.x + pos.y * world_size.x).opacity != f16::ZERO).any() {
@@ -399,6 +405,7 @@ fn main() {
     let mut display_solid = false;
     let mut display_pt = false;
     let mut display_diff = false;
+    let mut running_pt = false;
 
     let mut merge_timings = vec![vec![]; num_cascades];
     let mut merge_up_timings = vec![vec![]; num_cascades + 1];
@@ -410,7 +417,7 @@ fn main() {
             (
                 MouseButton::Middle,
                 Color::new(
-                    Vec3::new(f16::from_f32(5.0), f16::ZERO, f16::ZERO),
+                    Vec3::splat(f16::from_f32(10.0)),
                     Vec3::splat(f16::from_f32(0.5)),
                 ),
             ),
@@ -429,7 +436,7 @@ fn main() {
                 rect_brush.dispatch(
                     [world_size.x, world_size.y, 1],
                     &rt.cursor_position,
-                    &Vec2::new(2.0, 2.0),
+                    &Vec2::new(30.0, 30.0),
                     &brush.1,
                 );
 
@@ -512,13 +519,20 @@ fn main() {
         filter.dispatch([DISPLAY_SIZE, DISPLAY_SIZE, 1]);
         reset_texture.dispatch([DISPLAY_SIZE, DISPLAY_SIZE, 1], &radiance_texture);
 
-        if rt.pressed_key(KeyCode::Space) && pt_count < max_pt_count {
-            let n = 26; // Or 13
-            path_trace.dispatch([DISPLAY_SIZE, DISPLAY_SIZE, 1], &pt_count, &n);
+        if running_pt && pt_count < max_pt_count {
+            let n = 600; // Or 13
+            let timings = path_trace
+                .dispatch_async([DISPLAY_SIZE, DISPLAY_SIZE, 1], &pt_count, &n)
+                .execute_timed();
+            println!("{:?}", timings);
             pt_count += n;
+            println!("{:?}", pt_count);
             if pt_count == max_pt_count {
                 println!("Path tracing finished");
             }
+        }
+        if rt.just_pressed_key(KeyCode::Space) {
+            running_pt = !running_pt;
         }
         if rt.just_pressed_key(KeyCode::KeyP) {
             display_pt = !display_pt;

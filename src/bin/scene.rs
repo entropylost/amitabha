@@ -161,6 +161,34 @@ impl Scene {
         }
         Self { draws }
     }
+    pub fn sunflower4() -> Self {
+        let spacing = 30.0;
+        let center = Vec2::splat(1024.0 / 2.0);
+        let mut draws = vec![];
+        for i in 1..100 {
+            let r = spacing * (i as f32).sqrt();
+            let angle = i as f32 * 137.508_f32.to_radians();
+            let pos = center + Vec2::new(angle.cos(), angle.sin()) * r;
+
+            let brightness = (1.0 - r / 150.0).max(0.0);
+            let color = Oklch::new(brightness, 0.15, angle.to_degrees());
+            let color = LinSrgb::from_color(color);
+
+            draws.push(Draw {
+                brush: Brush::Circle(10.0),
+                center: pos,
+                color: SceneColor::new(
+                    Vec3::new(
+                        5.0 * color.red.max(0.0),
+                        5.0 * color.green.max(0.0),
+                        5.0 * color.blue.max(0.0),
+                    ),
+                    Vec3::splat(0.7),
+                ),
+            });
+        }
+        Self { draws }
+    }
 
     pub fn opacitytest() -> Self {
         let mut draws = vec![Draw {
@@ -193,5 +221,33 @@ impl Scene {
                 },
             ],
         }
+    }
+    pub fn pinhole() -> Self {
+        let mut draws = vec![
+            Draw {
+                brush: Brush::Rect(1.0, 512.0),
+                center: Vec2::new(512.0, -5.0),
+                color: SceneColor::solid(Vec3::splat(0.0)),
+            },
+            Draw {
+                brush: Brush::Rect(1.0, 512.0),
+                center: Vec2::new(512.0, 1024.0 + 5.0),
+                color: SceneColor::solid(Vec3::splat(0.0)),
+            },
+        ];
+        for i in -3..=3 {
+            let color = Oklch::new(0.5, 0.15, (1.618033988 * 360.0 * i as f64) % 360.0);
+            let color = LinSrgb::from_color(color);
+            draws.push(Draw {
+                brush: Brush::Rect(5.0, 20.0),
+                center: Vec2::new(1000.0, i as f32 * 40.0 + 512.0),
+                color: SceneColor::solid(Vec3::new(
+                    50.0 * color.red.max(0.0) as f32,
+                    50.0 * color.green.max(0.0) as f32,
+                    50.0 * color.blue.max(0.0) as f32,
+                )),
+            })
+        }
+        Self { draws }
     }
 }
