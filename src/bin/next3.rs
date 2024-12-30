@@ -26,6 +26,29 @@ type C = color::RgbF16;
 mod scene;
 use scene::*;
 
+#[tracked]
+fn rect_angle(center: Expr<Vec2<f32>>, size: Expr<Vec2<f32>>) -> Expr<Vec2<f32>> {
+    if (center.abs() <= size).all() {
+        Vec2::expr(0.0, TAU)
+    } else {
+        let center_angle = center.angle();
+        let bounds = Vec2::splat_expr(0.0_f32).var();
+        for corner in [
+            Vec2::new(1.0, 1.0_f32),
+            Vec2::new(1.0, -1.0),
+            Vec2::new(-1.0, 1.0),
+            Vec2::new(-1.0, -1.0),
+        ] {
+            let corner = corner * size + center;
+            let angle = corner.angle();
+            let angle = (angle - center_angle + PI).rem_euclid(TAU) - PI;
+            *bounds.x = keter::min(bounds.x, angle);
+            *bounds.y = keter::max(bounds.y, angle);
+        }
+        bounds + center_angle
+    }
+}
+
 fn main() {
     let num_cascades = SIZE.trailing_zeros() as usize;
 
@@ -270,13 +293,27 @@ fn main() {
         let world_pos = dispatch_id().xy().cast_f32() + Vec2::splat(0.5);
         let total_radiance = Vec3::splat(0_u32).var();
         for i in 0.expr()..n {
-            // TODO: Switch back to PHI but use integers. Also change max to 8192?
-            // Then switch to using u32 / i32 for the actual storage which gives enough bits.
+            let t = t + i;
             let offset = 6765; // Adjacent fibonacci number.
-            let dir = (((offset * (t + i)) % max_pt_count).cast_f32() / max_pt_count as f32) * TAU;
-            let del = world_pos - Vec2::splat(DISPLAY_SIZE as f32 / 2.0);
-            let r = del.length();
-            let theta = del.y.atan2(del.x);
+            let bounds = rect_angle(
+                Vec2::new(1000.0, 512.0) - world_pos,
+                Vec2::expr(5.0, 3.0_f32 * 40.0_f32 + 20.0),
+            );
+            let angle_top = bounds.y;
+            let angle_bottom = bounds.x;
+
+            let dir = (((((offset * t) % max_pt_count).cast_f32() / max_pt_count as f32)
+                + amitabha::utils::pcgf(dispatch_id().x + (dispatch_id().y << 10)))
+                % 1.0)
+                * (angle_top - angle_bottom)
+                + angle_bottom;
+            // let dir = amitabha::utils::pcgf(dispatch_id().x + (dispatch_id().y << 10) + (t << 20))
+            //     * (angle_top - angle_bottom)
+            //     + angle_bottom;
+
+            // let del = world_pos - Vec2::splat(DISPLAY_SIZE as f32 / 2.0);
+            // let r = del.length();
+            // let theta = del.y.atan2(del.x);
             // let dir =
             //     TAU * amitabha::utils::pcgf(dispatch_id().x + (dispatch_id().y << 10) + (t << 20));
             // let dir = dir + theta + amitabha::utils::pcgf((r / 1.5).cast_u32()) * TAU;
@@ -296,9 +333,19 @@ fn main() {
     }));
     let draw_pt = DEVICE.create_kernel::<fn(u32)>(&track!(|pt_count| {
         let pos = dispatch_id().xy();
+        let world_pos = pos.cast_f32() + Vec2::splat(0.5);
+        let bounds = rect_angle(
+            Vec2::new(1000.0, 512.0) - world_pos,
+            Vec2::expr(5.0, 3.0_f32 * 40.0_f32 + 20.0),
+        );
+        let angle_top = bounds.y;
+        let angle_bottom = bounds.x;
+
         let radiance = pt_sum_texture.read(pos).cast_f32()
             * (max_radiance / (u32::MAX as f64 + 1.0)) as f32
-            / keter::max(pt_count.cast_f32(), 1.0);
+            / keter::max(pt_count.cast_f32(), 1.0)
+            * (angle_top - angle_bottom).abs()
+            / TAU;
         pt_radiance.write(pos, radiance);
     }));
 
@@ -368,7 +415,7 @@ fn main() {
 
     // julia.dispatch_blocking([world_size.x, world_size.y, 1]);
 
-    let scene = Scene::sunflower4();
+    let scene = Scene::pinhole();
     for Draw {
         brush,
         center,
@@ -519,8 +566,8 @@ fn main() {
         filter.dispatch([DISPLAY_SIZE, DISPLAY_SIZE, 1]);
         reset_texture.dispatch([DISPLAY_SIZE, DISPLAY_SIZE, 1], &radiance_texture);
 
-        if running_pt && pt_count < max_pt_count {
-            let n = 600; // Or 13
+        if rt.just_pressed_key(KeyCode::Space) && pt_count < max_pt_count {
+            let n = 10;
             let timings = path_trace
                 .dispatch_async([DISPLAY_SIZE, DISPLAY_SIZE, 1], &pt_count, &n)
                 .execute_timed();

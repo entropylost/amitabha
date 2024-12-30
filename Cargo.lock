@@ -1026,6 +1026,7 @@ dependencies = [
  "cuda_device_sys",
  "keter_macro",
  "luisa_compute",
+ "num-traits",
  "parking_lot",
  "petgraph",
  "static_assertions",
