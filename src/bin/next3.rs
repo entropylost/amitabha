@@ -15,7 +15,7 @@ use keter::lang::types::vector::{Vec2, Vec3};
 use keter::prelude::*;
 use keter_testbed::{App, KeyCode, MouseButton};
 
-const DISPLAY_SIZE: u32 = 1024;
+const DISPLAY_SIZE: u32 = 512;
 const SIZE: u32 = DISPLAY_SIZE / 2;
 const SEGMENTS: u32 = 4 * 2;
 
@@ -295,21 +295,8 @@ fn main() {
         for i in 0.expr()..n {
             let t = t + i;
             let offset = 6765; // Adjacent fibonacci number.
-            let bounds = rect_angle(
-                Vec2::new(1000.0, 512.0) - world_pos,
-                Vec2::expr(5.0, 3.0_f32 * 40.0_f32 + 20.0),
-            );
-            let angle_top = bounds.y;
-            let angle_bottom = bounds.x;
 
-            let dir = (((((offset * t) % max_pt_count).cast_f32() / max_pt_count as f32)
-                + amitabha::utils::pcgf(dispatch_id().x + (dispatch_id().y << 10)))
-                % 1.0)
-                * (angle_top - angle_bottom)
-                + angle_bottom;
-            // let dir = amitabha::utils::pcgf(dispatch_id().x + (dispatch_id().y << 10) + (t << 20))
-            //     * (angle_top - angle_bottom)
-            //     + angle_bottom;
+            let dir = (((offset * t) % max_pt_count).cast_f32() / max_pt_count as f32) * TAU;
 
             // let del = world_pos - Vec2::splat(DISPLAY_SIZE as f32 / 2.0);
             // let r = del.length();
@@ -333,19 +320,10 @@ fn main() {
     }));
     let draw_pt = DEVICE.create_kernel::<fn(u32)>(&track!(|pt_count| {
         let pos = dispatch_id().xy();
-        let world_pos = pos.cast_f32() + Vec2::splat(0.5);
-        let bounds = rect_angle(
-            Vec2::new(1000.0, 512.0) - world_pos,
-            Vec2::expr(5.0, 3.0_f32 * 40.0_f32 + 20.0),
-        );
-        let angle_top = bounds.y;
-        let angle_bottom = bounds.x;
 
         let radiance = pt_sum_texture.read(pos).cast_f32()
             * (max_radiance / (u32::MAX as f64 + 1.0)) as f32
-            / keter::max(pt_count.cast_f32(), 1.0)
-            * (angle_top - angle_bottom).abs()
-            / TAU;
+            / keter::max(pt_count.cast_f32(), 1.0);
         pt_radiance.write(pos, radiance);
     }));
 
@@ -383,7 +361,7 @@ fn main() {
         assert!(r * r - r >= (c.x * c.x + c.y * c.y).sqrt());
 
         let pos = dispatch_id().xy().cast_f32() + 0.5;
-        let pos = 2.0 * ((pos / dispatch_size().xy().cast_f32()) - 0.5) * r;
+        let pos = 2.0 * ((pos / dispatch_size().xy().cast_f32()) - Vec2::expr(0.5, 0.7)) * r * 0.5;
         let z = pos.var();
 
         let iter = u32::MAX.var();
@@ -399,8 +377,8 @@ fn main() {
             let k = iter.cast_f32() / 500.0;
             let j = iter.cast_f32() / 200.0;
             Color::expr(
-                Vec3::<f32>::expr(0.0, 0.0, keter::max(k - 0.3, 0.0)).cast_f16(),
-                Vec3::<f32>::splat_expr(0.2).cast_f16(),
+                Vec3::<f32>::expr(0.0, 0.0, 0.0).cast_f16(),
+                Vec3::<f32>::splat_expr(0.05).cast_f16(),
             )
         } else {
             let k = keter::max(iter.cast_f32() - 200.0, 0.0) / 500.0;
@@ -413,34 +391,36 @@ fn main() {
         world.write(dispatch_id().x + dispatch_id().y * world_size.x, color);
     }));
 
-    // julia.dispatch_blocking([world_size.x, world_size.y, 1]);
+    julia.dispatch_blocking([world_size.x, world_size.y, 1]);
 
-    let scene = Scene::pinhole();
-    for Draw {
-        brush,
-        center,
-        color,
-    } in scene.draws
-    {
-        match brush {
-            Brush::Rect(width, height) => {
-                rect_brush.dispatch(
-                    [world_size.x, world_size.y, 1],
-                    &center,
-                    &Vec2::new(width, height),
-                    &Color::from(color),
-                );
-            }
-            Brush::Circle(radius) => {
-                circle_brush.dispatch(
-                    [world_size.x, world_size.y, 1],
-                    &center,
-                    &radius,
-                    &Color::from(color),
-                );
-            }
-        }
-    }
+    /*
+       let scene = Scene::simple();
+       for Draw {
+           brush,
+           center,
+           color,
+       } in scene.draws
+       {
+           match brush {
+               Brush::Rect(width, height) => {
+                   rect_brush.dispatch(
+                       [world_size.x, world_size.y, 1],
+                       &center,
+                       &Vec2::new(width, height),
+                       &Color::from(color),
+                   );
+               }
+               Brush::Circle(radius) => {
+                   circle_brush.dispatch(
+                       [world_size.x, world_size.y, 1],
+                       &center,
+                       &radius,
+                       &Color::from(color),
+                   );
+               }
+           }
+       }
+    */
 
     let draw_solid = DEVICE.create_kernel::<fn()>(&track!(|| {
         let pos = dispatch_id().xy();
@@ -566,14 +546,13 @@ fn main() {
         filter.dispatch([DISPLAY_SIZE, DISPLAY_SIZE, 1]);
         reset_texture.dispatch([DISPLAY_SIZE, DISPLAY_SIZE, 1], &radiance_texture);
 
-        if rt.just_pressed_key(KeyCode::Space) && pt_count < max_pt_count {
-            let n = 10;
+        if running_pt && pt_count < max_pt_count {
+            let n = 23;
             let timings = path_trace
                 .dispatch_async([DISPLAY_SIZE, DISPLAY_SIZE, 1], &pt_count, &n)
                 .execute_timed();
             println!("{:?}", timings);
             pt_count += n;
-            println!("{:?}", pt_count);
             if pt_count == max_pt_count {
                 println!("Path tracing finished");
             }

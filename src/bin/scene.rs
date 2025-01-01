@@ -212,14 +212,23 @@ impl Scene {
                 Draw {
                     brush: Brush::Circle(5.0),
                     center: Vec2::new(30.0, 256.0),
-                    color: SceneColor::new(Vec3::splat(5.0), Vec3::splat(0.5)),
+                    color: SceneColor::new(Vec3::new(10.0, 10.5, 11.0), Vec3::splat(0.5)),
                 },
                 Draw {
                     brush: Brush::Circle(7.0),
                     center: Vec2::new(300.0, 256.0),
-                    color: SceneColor::dark(Vec3::splat(0.5)),
+                    color: SceneColor::dark(Vec3::splat(10000.0)),
                 },
             ],
+        }
+    }
+    pub fn point() -> Self {
+        Self {
+            draws: vec![Draw {
+                brush: Brush::Rect(4.1, 4.1),
+                center: Vec2::new(256.0, 256.0),
+                color: SceneColor::new(Vec3::new(1.0, 1.5, 1.0), Vec3::splat(1000.0)),
+            }],
         }
     }
     pub fn pinhole() -> Self {
@@ -249,5 +258,26 @@ impl Scene {
             })
         }
         Self { draws }
+    }
+    pub fn volume() -> Self {
+        Self {
+            draws: vec![
+                Draw {
+                    brush: Brush::Circle(30.0),
+                    center: Vec2::new(256.0, 50.0),
+                    color: SceneColor::solid(Vec3::new(2.3, 0.5, 1.2)),
+                },
+                Draw {
+                    brush: Brush::Rect(100.0, 100.0),
+                    center: Vec2::new(256.0, 256.0),
+                    color: SceneColor::dark(Vec3::new(0.02, 0.01, 0.01)),
+                },
+                Draw {
+                    brush: Brush::Circle(15.0),
+                    center: Vec2::new(180.0, 256.0),
+                    color: SceneColor::solid(Vec3::new(0.8, 1.3, 0.8)),
+                },
+            ],
+        }
     }
 }
