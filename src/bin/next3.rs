@@ -377,7 +377,7 @@ fn main() {
             let k = iter.cast_f32() / 500.0;
             let j = iter.cast_f32() / 60.0;
             Color::expr(
-                Vec3::<f32>::expr(0.5, 0.0, j).cast_f16(),
+                Vec3::<f32>::expr(0.1 * j, 0.0, 0.0).cast_f16(),
                 Vec3::<f32>::splat_expr(0.3).cast_f16(),
             )
         } else {
@@ -389,8 +389,8 @@ fn main() {
                 0.0.expr()
             };
             Color::expr(
-                Vec3::<f32>::expr(0.0, j * 0.5, 0.0).cast_f16(),
-                Vec3::<f32>::expr(0.1, 0.01, 0.05).cast_f16(),
+                Vec3::<f32>::expr(0.0, 0.0, 0.0).cast_f16(),
+                (Vec3::<f32>::expr(0.3, 1.0, 3.0) * l * j * j).cast_f16(),
             )
         };
         world.write(dispatch_id().x + dispatch_id().y * world_size.x, color);
@@ -398,34 +398,32 @@ fn main() {
 
     julia.dispatch_blocking([world_size.x, world_size.y, 1]);
 
-    /*
-       let scene = Scene::simple();
-       for Draw {
-           brush,
-           center,
-           color,
-       } in scene.draws
-       {
-           match brush {
-               Brush::Rect(width, height) => {
-                   rect_brush.dispatch(
-                       [world_size.x, world_size.y, 1],
-                       &center,
-                       &Vec2::new(width, height),
-                       &Color::from(color),
-                   );
-               }
-               Brush::Circle(radius) => {
-                   circle_brush.dispatch(
-                       [world_size.x, world_size.y, 1],
-                       &center,
-                       &radius,
-                       &Color::from(color),
-                   );
-               }
-           }
-       }
-    */
+    let scene = Scene::top();
+    for Draw {
+        brush,
+        center,
+        color,
+    } in scene.draws
+    {
+        match brush {
+            Brush::Rect(width, height) => {
+                rect_brush.dispatch(
+                    [world_size.x, world_size.y, 1],
+                    &center,
+                    &Vec2::new(width, height),
+                    &Color::from(color),
+                );
+            }
+            Brush::Circle(radius) => {
+                circle_brush.dispatch(
+                    [world_size.x, world_size.y, 1],
+                    &center,
+                    &radius,
+                    &Color::from(color),
+                );
+            }
+        }
+    }
 
     let draw_solid = DEVICE.create_kernel::<fn()>(&track!(|| {
         let pos = dispatch_id().xy();

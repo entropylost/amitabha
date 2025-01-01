@@ -206,6 +206,15 @@ impl Scene {
         }
         Self { draws }
     }
+    pub fn top() -> Self {
+        Self {
+            draws: vec![Draw {
+                brush: Brush::Rect(10000.0, 10.0),
+                center: Vec2::new(0.0, 0.0),
+                color: SceneColor::new(Vec3::new(5.0, 5.0, 5.0), Vec3::splat(0.5)),
+            }],
+        }
+    }
     pub fn simple() -> Self {
         Self {
             draws: vec![
