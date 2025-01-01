@@ -356,12 +356,12 @@ fn main() {
         }));
 
     let julia = DEVICE.create_kernel::<fn()>(&track!(|| {
-        let c = Vec2::<f32>::new(-0.73, 0.2);
+        let c = Vec2::<f32>::new(-0.835, -0.2321);
         let r = 2.0;
         assert!(r * r - r >= (c.x * c.x + c.y * c.y).sqrt());
 
         let pos = dispatch_id().xy().cast_f32() + 0.5;
-        let pos = 2.0 * ((pos / dispatch_size().xy().cast_f32()) - Vec2::expr(0.5, 0.7)) * r * 0.5;
+        let pos = 2.0 * ((pos / dispatch_size().xy().cast_f32()) - Vec2::expr(0.5, 0.5)) * r * 0.7;
         let z = pos.var();
 
         let iter = u32::MAX.var();
@@ -372,20 +372,25 @@ fn main() {
                 break;
             }
         }
-        let color = if iter >= 100 {
+        let color = if iter > 30 {
             let iter = keter::min(iter, 1000);
             let k = iter.cast_f32() / 500.0;
-            let j = iter.cast_f32() / 200.0;
+            let j = iter.cast_f32() / 60.0;
             Color::expr(
-                Vec3::<f32>::expr(0.0, 0.0, 0.0).cast_f16(),
-                Vec3::<f32>::splat_expr(0.05).cast_f16(),
+                Vec3::<f32>::expr(0.5, 0.0, j).cast_f16(),
+                Vec3::<f32>::splat_expr(0.3).cast_f16(),
             )
         } else {
             let k = keter::max(iter.cast_f32() - 200.0, 0.0) / 500.0;
-            let j = iter.cast_f32() / 200.0;
+            let j = iter.cast_f32() / 30.0;
+            let l = if iter % 2 == 0 {
+                1.0_f32.expr()
+            } else {
+                0.0.expr()
+            };
             Color::expr(
-                Vec3::<f32>::splat_expr(0.0).cast_f16(),
-                Vec3::<f32>::splat_expr(0.0).cast_f16(),
+                Vec3::<f32>::expr(0.0, j * 0.5, 0.0).cast_f16(),
+                Vec3::<f32>::expr(0.1, 0.01, 0.05).cast_f16(),
             )
         };
         world.write(dispatch_id().x + dispatch_id().y * world_size.x, color);
