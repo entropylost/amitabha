@@ -15,7 +15,7 @@ use keter::lang::types::vector::{Vec2, Vec3};
 use keter::prelude::*;
 use keter_testbed::{App, KeyCode, MouseButton};
 
-const DISPLAY_SIZE: u32 = 512;
+const DISPLAY_SIZE: u32 = 1024;
 const SIZE: u32 = DISPLAY_SIZE / 2;
 const SEGMENTS: u32 = 4 * 2;
 
@@ -304,7 +304,7 @@ fn main() {
             // let dir =
             //     TAU * amitabha::utils::pcgf(dispatch_id().x + (dispatch_id().y << 10) + (t << 20));
             // let dir = dir + theta + amitabha::utils::pcgf((r / 1.5).cast_u32()) * TAU;
-            // let dir = dir + amitabha::utils::pcgf(dispatch_id().x + (dispatch_id().y << 16)) * TAU;
+            let dir = dir + amitabha::utils::pcgf(dispatch_id().x + (dispatch_id().y << 16)) * TAU;
             let dir = Vec2::expr(dir.cos(), dir.sin());
             let radiance = tracer
                 .tracer
@@ -361,7 +361,12 @@ fn main() {
         assert!(r * r - r >= (c.x * c.x + c.y * c.y).sqrt());
 
         let pos = dispatch_id().xy().cast_f32() + 0.5;
-        let pos = 2.0 * ((pos / dispatch_size().xy().cast_f32()) - Vec2::expr(0.5, 0.5)) * r * 0.7;
+        let pos = 2.0 * ((pos / dispatch_size().xy().cast_f32()) - Vec2::expr(0.5, 0.5)) * r * 0.6;
+        let theta = 0.5_f32;
+        let pos = Vec2::expr(
+            pos.x * theta.cos() + pos.y * theta.sin(),
+            -pos.x * theta.sin() + pos.y * theta.cos(),
+        );
         let z = pos.var();
 
         let iter = u32::MAX.var();
@@ -390,15 +395,15 @@ fn main() {
             };
             Color::expr(
                 Vec3::<f32>::expr(0.0, 0.0, 0.0).cast_f16(),
-                (Vec3::<f32>::expr(0.3, 1.0, 3.0) * l * j * j).cast_f16(),
+                (Vec3::<f32>::expr(0.25, 1.0, 2.5) * 0.5 * j * j).cast_f16(),
             )
         };
         world.write(dispatch_id().x + dispatch_id().y * world_size.x, color);
     }));
 
-    julia.dispatch_blocking([world_size.x, world_size.y, 1]);
+    // julia.dispatch_blocking([world_size.x, world_size.y, 1]);
 
-    let scene = Scene::top();
+    /*let scene = Scene::top();
     for Draw {
         brush,
         center,
@@ -423,7 +428,7 @@ fn main() {
                 );
             }
         }
-    }
+    }*/
 
     let draw_solid = DEVICE.create_kernel::<fn()>(&track!(|| {
         let pos = dispatch_id().xy();
@@ -463,10 +468,10 @@ fn main() {
         ];
         for brush in brushes {
             if rt.pressed_button(brush.0) {
-                rect_brush.dispatch(
+                circle_brush.dispatch(
                     [world_size.x, world_size.y, 1],
                     &rt.cursor_position,
-                    &Vec2::new(30.0, 30.0),
+                    &10.0,
                     &brush.1,
                 );
 
