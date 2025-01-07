@@ -7,9 +7,7 @@ use std::time::Instant;
 use amitabha::color::{Color, Emission};
 use amitabha::fluence::{self, Fluence, FluenceType};
 use amitabha::storage::{BufferStorage, RadianceStorage};
-use amitabha::trace::{
-    merge_up, SegmentedWorldMapper, StorageTracer, VoxelTracer, WorldSegment, WorldTracer,
-};
+use amitabha::trace::{merge_up, SegmentedWorldMapper, StorageTracer, VoxelTracer, WorldSegment};
 use amitabha::{color, merge_0, Axis, Grid, MergeKernelSettings, Probe};
 use keter::lang::types::vector::{Vec2, Vec3};
 use keter::prelude::*;
@@ -25,29 +23,6 @@ type C = color::RgbF16;
 
 mod scene;
 use scene::*;
-
-#[tracked]
-fn rect_angle(center: Expr<Vec2<f32>>, size: Expr<Vec2<f32>>) -> Expr<Vec2<f32>> {
-    if (center.abs() <= size).all() {
-        Vec2::expr(0.0, TAU)
-    } else {
-        let center_angle = center.angle();
-        let bounds = Vec2::splat_expr(0.0_f32).var();
-        for corner in [
-            Vec2::new(1.0, 1.0_f32),
-            Vec2::new(1.0, -1.0),
-            Vec2::new(-1.0, 1.0),
-            Vec2::new(-1.0, -1.0),
-        ] {
-            let corner = corner * size + center;
-            let angle = corner.angle();
-            let angle = (angle - center_angle + PI).rem_euclid(TAU) - PI;
-            *bounds.x = keter::min(bounds.x, angle);
-            *bounds.y = keter::max(bounds.y, angle);
-        }
-        bounds + center_angle
-    }
-}
 
 fn main() {
     let num_cascades = SIZE.trailing_zeros() as usize;
@@ -66,7 +41,8 @@ fn main() {
 
     let world_size = Vec2::new(DISPLAY_SIZE, DISPLAY_SIZE);
     let tracer = VoxelTracer::<C>::new(world_size);
-    let world = tracer.buffer.view(..);
+    let world_emission = tracer.emission.view(0);
+    let world_opacity = tracer.opacity.view(0);
 
     let rotations: [Vec2<i32>; 4] = [Vec2::x(), Vec2::y(), -Vec2::x(), -Vec2::y()];
 
@@ -198,10 +174,10 @@ fn main() {
             );
 
             // This is still necessary, since the even-line load still is offset by 1.
-            let base_fluence = world
-                .read(out_cell.x + out_cell.y * world_size.x)
-                .to_fluence::<F>(0.5.expr())
-                .restrict_angle((PI / 2.0).expr());
+            let base_fluence =
+                Color::<C>::expr(world_emission.read(out_cell), world_opacity.read(out_cell))
+                    .to_fluence::<F>(0.5.expr())
+                    .restrict_angle((PI / 2.0).expr());
 
             let radiance = base_fluence.over_radiance(radiance);
 
@@ -253,7 +229,7 @@ fn main() {
         let pos = dispatch_id().xy();
         let denom = 0.0.var();
         let numer = Vec3::splat(0.0_f32).var();
-        let opacity = world.read(pos.x + pos.y * world_size.x).opacity;
+        let opacity = world_opacity.read(pos);
         for (offset, weight) in [
             (Vec2::<i32>::splat(0), 1.0),
             (Vec2::x(), final_blur),
@@ -264,9 +240,7 @@ fn main() {
             let pos = (pos.cast_i32() + offset).cast_u32();
             // TODO: Bias surfaces as well, and do more general thing.
             // Can difference this and other opacity / optical depth?
-            if (pos < DISPLAY_SIZE).all()
-                && (world.read(pos.x + pos.y * world_size.x).opacity == opacity).all()
-            {
+            if (pos < DISPLAY_SIZE).all() && (world_opacity.read(pos) == opacity).all() {
                 let neighbor = radiance_texture.read(pos);
                 *numer += neighbor * weight;
                 *denom += weight;
@@ -279,6 +253,10 @@ fn main() {
     }));
     let reset_texture_2 = DEVICE.create_kernel::<fn(Tex2d<Vec3<u32>>)>(&track!(|texture| {
         texture.write(dispatch_id().xy(), Vec3::splat(0));
+    }));
+
+    let compute_diff = DEVICE.create_kernel::<fn()>(&track!(|| {
+        tracer.tracer.compute_diff();
     }));
 
     let pt_sum_texture =
@@ -308,7 +286,7 @@ fn main() {
             let dir = Vec2::expr(dir.cos(), dir.sin());
             let radiance = tracer
                 .tracer
-                .trace(&(), world_pos, dir, (2.0 * DISPLAY_SIZE as f32).expr())
+                .trace_opt(world_pos, dir, (2.0 * DISPLAY_SIZE as f32).expr())
                 .radiance;
             *total_radiance +=
                 (radiance.cast_f32() * ((u32::MAX as f64 + 1.0) / max_radiance) as f32).cast_u32();
@@ -343,7 +321,8 @@ fn main() {
         |center, size, color| {
             let pos = dispatch_id().xy();
             if ((pos.cast_f32() + 0.5 - center).abs() < size).all() {
-                world.write(pos.x + pos.y * world_size.x, color);
+                world_emission.write(pos, color.emission);
+                world_opacity.write(pos, color.opacity);
             }
         }
     ));
@@ -351,7 +330,8 @@ fn main() {
         DEVICE.create_kernel::<fn(Vec2<f32>, f32, Color<C>)>(&track!(|center, radius, color| {
             let pos = dispatch_id().xy();
             if (pos.cast_f32() + 0.5 - center).length() < radius {
-                world.write(pos.x + pos.y * world_size.x, color);
+                world_emission.write(pos, color.emission);
+                world_opacity.write(pos, color.opacity);
             }
         }));
 
@@ -361,8 +341,8 @@ fn main() {
         assert!(r * r - r >= (c.x * c.x + c.y * c.y).sqrt());
 
         let pos = dispatch_id().xy().cast_f32() + 0.5;
-        let pos = 2.0 * ((pos / dispatch_size().xy().cast_f32()) - Vec2::expr(0.5, 0.5)) * r * 0.6;
-        let theta = 0.5_f32;
+        let pos = 2.0 * ((pos / dispatch_size().xy().cast_f32()) - Vec2::expr(0.5, 0.5)) * r * 0.7;
+        let theta = 0.0_f32;
         let pos = Vec2::expr(
             pos.x * theta.cos() + pos.y * theta.sin(),
             -pos.x * theta.sin() + pos.y * theta.cos(),
@@ -379,14 +359,12 @@ fn main() {
         }
         let color = if iter > 30 {
             let iter = keter::min(iter, 1000);
-            let k = iter.cast_f32() / 500.0;
             let j = iter.cast_f32() / 60.0;
-            Color::expr(
+            Color::<color::RgbF16>::expr(
                 Vec3::<f32>::expr(0.1 * j, 0.0, 0.0).cast_f16(),
                 Vec3::<f32>::splat_expr(0.3).cast_f16(),
             )
         } else {
-            let k = keter::max(iter.cast_f32() - 200.0, 0.0) / 500.0;
             let j = iter.cast_f32() / 30.0;
             let l = if iter % 2 == 0 {
                 1.0_f32.expr()
@@ -395,44 +373,47 @@ fn main() {
             };
             Color::expr(
                 Vec3::<f32>::expr(0.0, 0.0, 0.0).cast_f16(),
-                (Vec3::<f32>::expr(0.25, 1.0, 2.5) * 0.5 * j * j).cast_f16(),
+                (Vec3::<f32>::expr(0.25, 1.0, 2.5) * l * j * j).cast_f16(),
             )
         };
-        world.write(dispatch_id().x + dispatch_id().y * world_size.x, color);
+        world_emission.write(dispatch_id().xy(), color.emission);
+        world_opacity.write(dispatch_id().xy(), color.opacity);
     }));
 
     // julia.dispatch_blocking([world_size.x, world_size.y, 1]);
 
-    /*let scene = Scene::top();
-    for Draw {
-        brush,
-        center,
-        color,
-    } in scene.draws
-    {
-        match brush {
-            Brush::Rect(width, height) => {
-                rect_brush.dispatch(
-                    [world_size.x, world_size.y, 1],
-                    &center,
-                    &Vec2::new(width, height),
-                    &Color::from(color),
-                );
-            }
-            Brush::Circle(radius) => {
-                circle_brush.dispatch(
-                    [world_size.x, world_size.y, 1],
-                    &center,
-                    &radius,
-                    &Color::from(color),
-                );
-            }
-        }
-    }*/
+    /*
+       let scene = Scene::sunflower4();
+       for Draw {
+           brush,
+           center,
+           color,
+       } in scene.draws
+       {
+           match brush {
+               Brush::Rect(width, height) => {
+                   rect_brush.dispatch(
+                       [world_size.x, world_size.y, 1],
+                       &center,
+                       &Vec2::new(width, height),
+                       &Color::from(color),
+                   );
+               }
+               Brush::Circle(radius) => {
+                   circle_brush.dispatch(
+                       [world_size.x, world_size.y, 1],
+                       &center,
+                       &radius,
+                       &Color::from(color),
+                   );
+               }
+           }
+       }
+    */
 
     let draw_solid = DEVICE.create_kernel::<fn()>(&track!(|| {
         let pos = dispatch_id().xy();
-        if (world.read(pos.x + pos.y * world_size.x).opacity != f16::ZERO).any() {
+        if (world_opacity.read(pos) != f16::ZERO).any() {
             app.display().write(pos, Vec3::expr(1.0, 0.0, 0.0));
         }
     }));
@@ -452,7 +433,7 @@ fn main() {
             (
                 MouseButton::Middle,
                 Color::new(
-                    Vec3::splat(f16::from_f32(10.0)),
+                    Vec3::splat(f16::from_f32(1.0)),
                     Vec3::splat(f16::from_f32(0.5)),
                 ),
             ),
@@ -471,7 +452,7 @@ fn main() {
                 circle_brush.dispatch(
                     [world_size.x, world_size.y, 1],
                     &rt.cursor_position,
-                    &10.0,
+                    &4.0,
                     &brush.1,
                 );
 
@@ -554,8 +535,9 @@ fn main() {
         filter.dispatch([DISPLAY_SIZE, DISPLAY_SIZE, 1]);
         reset_texture.dispatch([DISPLAY_SIZE, DISPLAY_SIZE, 1], &radiance_texture);
 
-        if running_pt && pt_count < max_pt_count {
-            let n = 23;
+        if rt.just_pressed_key(KeyCode::Space) && pt_count < max_pt_count {
+            compute_diff.dispatch_blocking([DISPLAY_SIZE / 8, DISPLAY_SIZE / 8, 1]);
+            let n = 48;
             let timings = path_trace
                 .dispatch_async([DISPLAY_SIZE, DISPLAY_SIZE, 1], &pt_count, &n)
                 .execute_timed();
