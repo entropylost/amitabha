@@ -66,13 +66,14 @@ impl GridExpr {
         dir - (self.directions / 2).cast_f32() + 0.5
     }
     #[tracked]
-    pub fn ray_angle(self, spacing: Expr<f32>, dir: Expr<f32>) -> Expr<f32> {
-        self.offset(dir).atan2(spacing)
+    pub fn ray_angle(self, dir: Expr<f32>) -> Expr<f32> {
+        // Total angle is PI / 2 (assumed)
+        self.offset(dir).atan2((self.directions / 2).cast_f32())
     }
     #[tracked]
-    pub fn angle_size(self, spacing: Expr<f32>, dir: Expr<u32>) -> Expr<f32> {
-        let upper = self.ray_angle(spacing, dir.cast_f32() + 0.5);
-        let lower = self.ray_angle(spacing, dir.cast_f32() - 0.5);
+    pub fn angle_size(self, dir: Expr<u32>) -> Expr<f32> {
+        let upper = self.ray_angle(dir.cast_f32() + 0.5);
+        let lower = self.ray_angle(dir.cast_f32() - 0.5);
         upper - lower
     }
 }

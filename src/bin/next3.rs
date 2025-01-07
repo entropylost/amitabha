@@ -382,34 +382,32 @@ fn main() {
 
     // julia.dispatch_blocking([world_size.x, world_size.y, 1]);
 
-    /*
-       let scene = Scene::sunflower4();
-       for Draw {
-           brush,
-           center,
-           color,
-       } in scene.draws
-       {
-           match brush {
-               Brush::Rect(width, height) => {
-                   rect_brush.dispatch(
-                       [world_size.x, world_size.y, 1],
-                       &center,
-                       &Vec2::new(width, height),
-                       &Color::from(color),
-                   );
-               }
-               Brush::Circle(radius) => {
-                   circle_brush.dispatch(
-                       [world_size.x, world_size.y, 1],
-                       &center,
-                       &radius,
-                       &Color::from(color),
-                   );
-               }
-           }
-       }
-    */
+    let scene = Scene::simple();
+    for Draw {
+        brush,
+        center,
+        color,
+    } in scene.draws
+    {
+        match brush {
+            Brush::Rect(width, height) => {
+                rect_brush.dispatch(
+                    [world_size.x, world_size.y, 1],
+                    &center,
+                    &Vec2::new(width, height),
+                    &Color::from(color),
+                );
+            }
+            Brush::Circle(radius) => {
+                circle_brush.dispatch(
+                    [world_size.x, world_size.y, 1],
+                    &center,
+                    &radius,
+                    &Color::from(color),
+                );
+            }
+        }
+    }
 
     let draw_solid = DEVICE.create_kernel::<fn()>(&track!(|| {
         let pos = dispatch_id().xy();
@@ -499,11 +497,7 @@ fn main() {
                     kernel
                         .dispatch(
                             grid,
-                            &(
-                                cache_pyramid[i].view(..),
-                                cache_pyramid[i + 1].view(..),
-                                (1 << (i + 1)) as f32,
-                            ),
+                            &(cache_pyramid[i].view(..), cache_pyramid[i + 1].view(..)),
                             &buffer_b,
                             &buffer_a,
                         )

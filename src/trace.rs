@@ -168,10 +168,8 @@ impl<F: FluenceType, T: WorldTracer<F>> Tracer<F> for SegmentedWorldMapper<F, T>
         let dir = probe.dir;
 
         let start = self.to_world(grid, cell, segment);
-        let spacing = (segment.size.x / next_grid.size.x.cast::<f32>())
-            / (segment.size.y / (next_grid.size.y / self.segments.len() as u32).cast::<f32>());
-        let lower_size = next_grid.angle_size(spacing, dir * 2);
-        let upper_size = next_grid.angle_size(spacing, dir * 2 + 1);
+        let lower_size = next_grid.angle_size(dir * 2);
+        let upper_size = next_grid.angle_size(dir * 2 + 1);
         let lower_offset = Vec2::expr(1, grid.lower_offset(dir));
         let upper_offset = Vec2::expr(1, grid.upper_offset(dir));
 
@@ -272,10 +270,8 @@ impl<F: FluenceType, T: WorldTracer<F>> Tracer<F> for WorldMapper<F, T> {
         let dir = probe.dir;
 
         let start = self.to_world(grid, cell);
-        let spacing = (self.world_size.x / next_grid.size.x.cast::<f32>())
-            / (self.world_size.y / next_grid.size.y.cast::<f32>());
-        let lower_size = next_grid.angle_size(spacing, dir * 2);
-        let upper_size = next_grid.angle_size(spacing, dir * 2 + 1);
+        let lower_size = next_grid.angle_size(dir * 2);
+        let upper_size = next_grid.angle_size(dir * 2 + 1);
         let lower_offset = Vec2::expr(1, grid.lower_offset(dir));
         let upper_offset = Vec2::expr(1, grid.upper_offset(dir));
 
@@ -716,18 +712,18 @@ impl StorageTracer {
 }
 
 impl<F: FluenceType> Tracer<F> for StorageTracer {
-    type Params = (BufferVar<Fluence<F>>, BufferVar<Fluence<F>>, Expr<f32>);
+    type Params = (BufferVar<Fluence<F>>, BufferVar<Fluence<F>>);
     #[tracked]
     fn trace(
         &self,
-        (buffer, next_buffer, spacing): &Self::Params,
+        (buffer, next_buffer): &Self::Params,
         grid: Expr<Grid>,
         probe: Expr<Probe>,
     ) -> [Expr<Fluence<F>>; 2] {
         // TODO: Can compress if doing bindless or something.
         let next_grid = grid.next();
-        let lower_size = next_grid.angle_size(*spacing, probe.dir * 2);
-        let upper_size = next_grid.angle_size(*spacing, probe.dir * 2 + 1);
+        let lower_size = next_grid.angle_size(probe.dir * 2);
+        let upper_size = next_grid.angle_size(probe.dir * 2 + 1);
         if probe.cell.x % 2 == 0 {
             [
                 self.load(next_buffer, next_grid, probe.next().with_dir(probe.dir * 2))
