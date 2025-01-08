@@ -104,7 +104,7 @@ pub struct WorldSegment {
 
 pub struct SegmentedWorldMapper<F: FluenceType, T> {
     pub tracer: T,
-    pub segments: Buffer<WorldSegment>,
+    pub segments: BufferView<WorldSegment>,
     pub _marker: PhantomData<F>,
 }
 impl<F: FluenceType, T> SegmentedWorldMapper<F, T> {

@@ -17,6 +17,7 @@ pub struct HRCRenderer {
     display_size: u32,
     size: u32,
     segments: Vec<WorldSegment>,
+    _segments_buffer: Buffer<WorldSegment>,
     axes: [Axis; 3],
     traced_levels: u32,
     cache_pyramid: Vec<Buffer<Fluence<F>>>,
@@ -69,9 +70,11 @@ impl HRCRenderer {
             }
         }
 
+        let segments_buffer = DEVICE.create_buffer_from_slice(&segments);
+
         let tracer = SegmentedWorldMapper {
             tracer: &world,
-            segments: DEVICE.create_buffer_from_slice(&segments),
+            segments: segments_buffer.view(..),
             _marker: PhantomData::<F>,
         };
         let axes = [Axis::CellY, Axis::Direction, Axis::CellX];
@@ -132,7 +135,7 @@ impl HRCRenderer {
         let finish_kernel = DEVICE
             .create_kernel::<fn(Vec2<i32>, u32, Buffer<<F as FluenceType>::Radiance>)>(&track!(
                 |rotation, rotation_index, next_radiance| {
-                    set_block_size([2, 32, 2]);
+                    set_block_size([2, 32, 1]);
                     let cell = dispatch_id().xy().cast_i32();
 
                     let out_cell = {
@@ -198,6 +201,7 @@ impl HRCRenderer {
             display_size,
             size,
             segments,
+            _segments_buffer: segments_buffer,
             axes,
             traced_levels,
             cache_pyramid,
@@ -255,8 +259,8 @@ impl HRCRenderer {
                             self.cache_pyramid[i].view(..),
                             self.cache_pyramid[i + 1].view(..),
                         ),
-                        buffer_b,
                         buffer_a,
+                        buffer_b,
                     )
                     .debug(format!("Merge {}", i))
             })

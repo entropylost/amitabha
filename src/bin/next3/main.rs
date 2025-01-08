@@ -63,9 +63,11 @@ fn main() {
         }
     }
 
+    let segments = DEVICE.create_buffer_from_slice(&segments);
+
     let tracer = SegmentedWorldMapper {
         tracer: &world,
-        segments: DEVICE.create_buffer_from_slice(&segments),
+        segments: segments.view(..),
         _marker: PhantomData::<F>,
     };
 
