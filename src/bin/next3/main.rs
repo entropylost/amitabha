@@ -39,10 +39,7 @@ fn main() {
     let buffer_b =
         DEVICE.create_buffer::<<F as FluenceType>::Radiance>((SEGMENTS * SIZE * SIZE * 2) as usize);
 
-    let world_size = Vec2::new(DISPLAY_SIZE, DISPLAY_SIZE);
-    let tracer = VoxelTracer::<C>::new(world_size);
-    let world_emission = tracer.emission.view(0);
-    let world_opacity = tracer.opacity.view(0);
+    let world = VoxelTracer::<C>::new(Vec2::new(DISPLAY_SIZE, DISPLAY_SIZE));
 
     let rotations: [Vec2<i32>; 4] = [Vec2::x(), Vec2::y(), -Vec2::x(), -Vec2::y()];
 
@@ -50,7 +47,7 @@ fn main() {
 
     for r in rotations {
         for y_offset in [0, 1] {
-            let half_size = world_size.x as f32 / 2.0;
+            let half_size = world.size.x as f32 / 2.0;
             let r = Vec2::new(r.x as f32, r.y as f32);
             let x_dir = r;
             let y_dir = Vec2::new(-r.y, r.x);
@@ -67,7 +64,7 @@ fn main() {
     }
 
     let tracer = SegmentedWorldMapper {
-        tracer,
+        tracer: &world,
         segments: DEVICE.create_buffer_from_slice(&segments),
         _marker: PhantomData::<F>,
     };
@@ -130,7 +127,7 @@ fn main() {
 
             let out_cell = {
                 let r = rotation.cast_f32();
-                let half_size = world_size.x as f32 / 2.0;
+                let half_size = world.size.x as f32 / 2.0;
                 let x_dir = r;
                 let y_dir = Vec2::expr(-r.y, r.x);
                 let diag = x_dir + y_dir;
@@ -174,10 +171,10 @@ fn main() {
             );
 
             // This is still necessary, since the even-line load still is offset by 1.
-            let base_fluence =
-                Color::<C>::expr(world_emission.read(out_cell), world_opacity.read(out_cell))
-                    .to_fluence::<F>(0.5.expr())
-                    .restrict_angle((PI / 2.0).expr());
+            let base_fluence = world
+                .read(out_cell)
+                .to_fluence::<F>(0.5.expr())
+                .restrict_angle((PI / 2.0).expr());
 
             let radiance = base_fluence.over_radiance(radiance);
 
@@ -229,7 +226,7 @@ fn main() {
         let pos = dispatch_id().xy();
         let denom = 0.0.var();
         let numer = Vec3::splat(0.0_f32).var();
-        let opacity = world_opacity.read(pos);
+        let opacity = world.read_opacity(pos);
         for (offset, weight) in [
             (Vec2::<i32>::splat(0), 1.0),
             (Vec2::x(), final_blur),
@@ -240,7 +237,7 @@ fn main() {
             let pos = (pos.cast_i32() + offset).cast_u32();
             // TODO: Bias surfaces as well, and do more general thing.
             // Can difference this and other opacity / optical depth?
-            if (pos < DISPLAY_SIZE).all() && (world_opacity.read(pos) == opacity).all() {
+            if (pos < DISPLAY_SIZE).all() && (world.read_opacity(pos) == opacity).all() {
                 let neighbor = radiance_texture.read(pos);
                 *numer += neighbor * weight;
                 *denom += weight;
@@ -321,8 +318,7 @@ fn main() {
         |center, size, color| {
             let pos = dispatch_id().xy();
             if ((pos.cast_f32() + 0.5 - center).abs() < size).all() {
-                world_emission.write(pos, color.emission);
-                world_opacity.write(pos, color.opacity);
+                world.write(pos, color);
             }
         }
     ));
@@ -330,8 +326,7 @@ fn main() {
         DEVICE.create_kernel::<fn(Vec2<f32>, f32, Color<C>)>(&track!(|center, radius, color| {
             let pos = dispatch_id().xy();
             if (pos.cast_f32() + 0.5 - center).length() < radius {
-                world_emission.write(pos, color.emission);
-                world_opacity.write(pos, color.opacity);
+                world.write(pos, color);
             }
         }));
 
@@ -376,13 +371,12 @@ fn main() {
                 (Vec3::<f32>::expr(0.25, 1.0, 2.5) * l * j * j).cast_f16(),
             )
         };
-        world_emission.write(dispatch_id().xy(), color.emission);
-        world_opacity.write(dispatch_id().xy(), color.opacity);
+        world.write(dispatch_id().xy(), color);
     }));
 
-    // julia.dispatch_blocking([world_size.x, world_size.y, 1]);
+    julia.dispatch_blocking([world.size.x, world.size.y, 1]);
 
-    let scene = Scene::simple();
+    let scene = Scene::top();
     for Draw {
         brush,
         center,
@@ -392,7 +386,7 @@ fn main() {
         match brush {
             Brush::Rect(width, height) => {
                 rect_brush.dispatch(
-                    [world_size.x, world_size.y, 1],
+                    [world.size.x, world.size.y, 1],
                     &center,
                     &Vec2::new(width, height),
                     &Color::from(color),
@@ -400,7 +394,7 @@ fn main() {
             }
             Brush::Circle(radius) => {
                 circle_brush.dispatch(
-                    [world_size.x, world_size.y, 1],
+                    [world.size.x, world.size.y, 1],
                     &center,
                     &radius,
                     &Color::from(color),
@@ -411,7 +405,7 @@ fn main() {
 
     let draw_solid = DEVICE.create_kernel::<fn()>(&track!(|| {
         let pos = dispatch_id().xy();
-        if (world_opacity.read(pos) != f16::ZERO).any() {
+        if (world.read_opacity(pos) != f16::ZERO).any() {
             app.display().write(pos, Vec3::expr(1.0, 0.0, 0.0));
         }
     }));
@@ -448,7 +442,7 @@ fn main() {
         for brush in brushes {
             if rt.pressed_button(brush.0) {
                 circle_brush.dispatch(
-                    [world_size.x, world_size.y, 1],
+                    [world.size.x, world.size.y, 1],
                     &rt.cursor_position,
                     &4.0,
                     &brush.1,

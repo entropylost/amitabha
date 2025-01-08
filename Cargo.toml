@@ -8,5 +8,4 @@ default-run = "next3"
 glam = { version = "0.27.0" }
 keter = { path = "../sefirot/keter", features = ["glam", "trace"] }
 keter_testbed = { path = "../sefirot/testbed" }
-image = "0.25.5"
 palette = "0.7.6"
