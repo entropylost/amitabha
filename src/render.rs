@@ -5,7 +5,7 @@ use keter::graph::NodeConfigs;
 use keter::lang::types::vector::Vec2;
 use keter::prelude::*;
 
-use crate::fluence::{Fluence, FluenceType, RgbF16 as F};
+use crate::fluence::{Fluence, FluenceType, Radiance, RgbF16 as F};
 use crate::storage::BufferStorage;
 use crate::trace::{merge_up, SegmentedWorldMapper, StorageTracer, WorldSegment, WorldTracer};
 use crate::{merge_0, Axis, Grid, MergeKernel, MergeKernelSettings, Probe};
@@ -25,6 +25,7 @@ pub struct HRCRenderer {
     merge_up_kernel: Kernel<fn(Grid, Buffer<Fluence<F>>, Buffer<Fluence<F>>)>,
     kernel: MergeKernel<F, StorageTracer, BufferStorage>,
     finish_kernel: Kernel<fn(Vec2<i32>, u32, Buffer<R>)>,
+    clear_radiance_kernel: Kernel<fn()>,
     pub radiance: Tex2d<R>,
 }
 
@@ -184,6 +185,14 @@ impl HRCRenderer {
                     radiance_texture.write(out_cell, radiance_texture.read(out_cell) + radiance);
                 }
             ));
+
+        // TODO: Clear the other buffers as well?
+        let clear_radiance_kernel = DEVICE.create_kernel::<fn()>(&track!(|| {
+            set_block_size([8, 8, 1]);
+            let cell = dispatch_id().xy();
+            radiance_texture.write(cell, R::black());
+        }));
+
         Self {
             num_cascades,
             display_size,
@@ -197,6 +206,7 @@ impl HRCRenderer {
             merge_up_kernel,
             kernel,
             finish_kernel,
+            clear_radiance_kernel,
             radiance: radiance_texture,
         }
     }
@@ -267,6 +277,13 @@ impl HRCRenderer {
             })
             .collect::<Vec<_>>()
             .chain();
-        (merge_up_commands, merge_commands, finish_commands).chain()
+        (
+            merge_up_commands,
+            merge_commands,
+            self.clear_radiance_kernel
+                .dispatch_async([self.display_size, self.display_size, 1]),
+            finish_commands,
+        )
+            .chain()
     }
 }
