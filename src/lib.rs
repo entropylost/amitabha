@@ -18,6 +18,8 @@ pub mod storage;
 use storage::RadianceStorage;
 pub mod utils;
 
+pub mod render;
+
 #[derive(Debug, Clone, Copy, Value)]
 #[repr(C)]
 pub struct Grid {

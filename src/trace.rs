@@ -224,7 +224,7 @@ impl<F: FluenceType, T: WorldTracer<F>> Tracer0<F> for SegmentedWorldMapper<F, T
         // Counter-correct because of offset
         // actual center-point is at cell - 0.5, so this prevents 2px gaps in shadows.
         // TODO: This is kinda hacky. Also, remove if trying to compute radiance hitting an edge.
-        let start = self.to_world_f(next_grid, cell_f - Vec2::expr(0.5, 0.0), segment);
+        let start = self.to_world_f(next_grid, cell_f - Vec2::expr(0.49, 0.0), segment);
 
         let lower_size = (PI / 4.0).expr();
         let upper_size = (PI / 4.0).expr();

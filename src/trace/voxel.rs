@@ -219,7 +219,7 @@ impl VoxelTracer<crate::color::RgbF16> {
         ray_dir: Expr<Vec2<f32>>,
         length: Expr<f32>,
     ) -> Expr<Fluence<crate::fluence::RgbF16>> {
-        let start = start + Vec2::new(0.01, 0.01);
+        let start = start + Vec2::new(0.001, 0.001);
         let inv_dir = (ray_dir + f32::EPSILON).recip();
 
         let interval = aabb_intersect(
@@ -372,7 +372,7 @@ where
         ray_dir: Expr<Vec2<f32>>,
         length: Expr<f32>,
     ) -> Expr<Fluence<F>> {
-        let start = start + Vec2::new(0.01, 0.01);
+        let start = start + Vec2::new(0.001, 0.001);
         let inv_dir = (ray_dir + f32::EPSILON).recip();
         let interval = aabb_intersect(
             start,
