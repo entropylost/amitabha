@@ -27,8 +27,7 @@ use scene::*;
 fn main() {
     let num_cascades = SIZE.trailing_zeros() as usize;
 
-    let grid_size = [DISPLAY_SIZE; 2];
-    let app = App::new("Amitabha", grid_size)
+    let app = App::new("Amitabha", [DISPLAY_SIZE; 2])
         .scale(2048 / DISPLAY_SIZE)
         .dpi(2.0)
         .agx()

@@ -1,12 +1,12 @@
 #![feature(more_float_constants)]
 
 use std::f32::consts::PI;
-use std::time::Instant;
 
 use amitabha::color::{Color, Emission};
 use amitabha::render::{HRCRenderer, HRCSettings};
 use amitabha::trace::VoxelTracer;
 use amitabha::{color, fluence};
+use keter::graph::profile::Profiler;
 use keter::lang::types::vector::{Vec2, Vec3};
 use keter::prelude::*;
 use keter_testbed::{App, MouseButton};
@@ -17,8 +17,7 @@ type F = fluence::RgbF16;
 type C = color::RgbF16;
 
 fn main() {
-    let grid_size = [DISPLAY_SIZE; 2];
-    let app = App::new("Amitabha", grid_size)
+    let app = App::new("Amitabha", [DISPLAY_SIZE; 2])
         .scale(2048 / DISPLAY_SIZE)
         .dpi(2.0)
         .agx()
@@ -34,7 +33,11 @@ fn main() {
             .read(cell)
             .to_fluence::<F>(0.5.expr())
             .restrict_angle((PI / 2.0).expr());
-        let radiance = base_fluence.over_radiance(renderer.radiance.read(cell));
+        let radiance = Vec3::splat(f16::ZERO).var();
+        for i in 0_u32..4_u32 {
+            *radiance += renderer.radiance.read(cell.extend(i));
+        }
+        let radiance = base_fluence.over_radiance(**radiance);
 
         app.display().write(cell, radiance.cast_f32());
     }));
@@ -111,6 +114,8 @@ fn main() {
         ),
     );
 
+    let mut profiler = Profiler::new();
+
     app.run(|rt, _scope| {
         let brushes = [
             (
@@ -141,9 +146,12 @@ fn main() {
             }
         }
 
-        let start = Instant::now();
-        renderer.render().execute_blocking();
-        println!("Render: {:?}", start.elapsed());
+        profiler.record(renderer.render().execute_timed());
         draw.dispatch([DISPLAY_SIZE, DISPLAY_SIZE, 1]);
+
+        if profiler.time() > 3000.0 {
+            profiler.print(&["Merge Up", "Merge Down", "Finish"], true);
+            profiler.reset();
+        }
     });
 }

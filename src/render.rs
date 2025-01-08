@@ -5,7 +5,7 @@ use keter::graph::NodeConfigs;
 use keter::lang::types::vector::Vec2;
 use keter::prelude::*;
 
-use crate::fluence::{Fluence, FluenceType, Radiance, RgbF16 as F};
+use crate::fluence::{Fluence, FluenceType, RgbF16 as F};
 use crate::storage::BufferStorage;
 use crate::trace::{merge_up, SegmentedWorldMapper, StorageTracer, WorldSegment, WorldTracer};
 use crate::{merge_0, Axis, Grid, MergeKernel, MergeKernelSettings, Probe};
@@ -25,9 +25,8 @@ pub struct HRCRenderer {
     store_level_kernel: Kernel<fn(Grid, Buffer<Fluence<F>>)>,
     merge_up_kernel: Kernel<fn(Grid, Buffer<Fluence<F>>, Buffer<Fluence<F>>)>,
     kernel: MergeKernel<F, StorageTracer, BufferStorage>,
-    finish_kernel: Kernel<fn(Vec2<i32>, u32, Buffer<R>)>,
-    clear_radiance_kernel: Kernel<fn()>,
-    pub radiance: Tex2d<R>,
+    finish_kernel: Kernel<fn(Buffer<R>)>,
+    pub radiance: Tex3d<R>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -129,72 +128,69 @@ impl HRCRenderer {
 
         let kernel = settings.build_kernel();
 
-        let radiance_texture =
-            DEVICE.create_tex2d::<R>(R::natural_storage(), display_size, display_size, 1);
+        let radiance_texture = DEVICE.create_tex3d::<R>(
+            R::natural_storage(),
+            display_size,
+            display_size,
+            Self::rotations().len() as u32,
+            1,
+        );
 
-        let finish_kernel = DEVICE
-            .create_kernel::<fn(Vec2<i32>, u32, Buffer<<F as FluenceType>::Radiance>)>(&track!(
-                |rotation, rotation_index, next_radiance| {
-                    set_block_size([2, 32, 1]);
-                    let cell = dispatch_id().xy().cast_i32();
+        let finish_kernel = DEVICE.create_kernel::<fn(Buffer<<F as FluenceType>::Radiance>)>(
+            &track!(|next_radiance| {
+                set_block_size([2, 32, 1]);
+                let cell = dispatch_id().xy().cast_i32();
+                let rotation_index = dispatch_id().z;
+                let rotation = Self::rotations().expr().read(rotation_index);
 
-                    let out_cell = {
-                        let r = rotation.cast_f32();
-                        let half_size = display_size as f32 / 2.0;
-                        let x_dir = r;
-                        let y_dir = Vec2::expr(-r.y, r.x);
-                        let diag = x_dir + y_dir;
-                        let origin = Vec2::splat(half_size) - half_size * diag + diag * 0.5;
-                        let value =
-                            (origin + x_dir * cell.x.cast_f32() + y_dir * cell.y.cast_f32())
-                                .floor();
-                        let a = (value >= 0.0).all() && (value < display_size as f32).all();
-                        lc_assert!(a);
-                        value.cast_u32()
-                    };
+                let out_cell = {
+                    let r = rotation.cast_f32();
+                    let half_size = display_size as f32 / 2.0;
+                    let x_dir = r;
+                    let y_dir = Vec2::expr(-r.y, r.x);
+                    let diag = x_dir + y_dir;
+                    let origin = Vec2::splat(half_size) - half_size * diag + diag * 0.5;
+                    let value =
+                        (origin + x_dir * cell.x.cast_f32() + y_dir * cell.y.cast_f32()).floor();
+                    let a = (value >= 0.0).all() && (value < display_size as f32).all();
+                    lc_assert!(a);
+                    value.cast_u32()
+                };
 
-                    let cell = cell + Vec2::x();
-                    if cell.x >= display_size as i32 {
-                        return;
-                    }
-
-                    let next_grid =
-                        Grid::new(Vec2::new(size, segments.len() as u32 * size), 2).expr();
-
-                    let global_y_offset = (2 * size * rotation_index).cast_i32();
-
-                    let offset = if cell.x % 2 == cell.y % 2 {
-                        0.expr()
-                    } else if cell.y % 2 == 0 {
-                        (size - 1).expr()
-                    } else {
-                        size.expr()
-                    };
-                    let radiance = merge_0::<F, _, _>(
-                        next_grid,
-                        Vec2::expr(cell.x / 2, cell.y / 2 + offset.cast_i32() + global_y_offset),
-                        (&merge_storage, &next_radiance),
-                        (
-                            &tracer,
-                            // TODO: This really isn't an elegant way of solving the edge cases, but it works.
-                            &(
-                                2 * rotation_index + (cell.x % 2 != cell.y % 2).cast_u32(),
-                                (),
-                            ),
-                        ),
-                        cell.x % 2 == 0,
-                    );
-
-                    radiance_texture.write(out_cell, radiance_texture.read(out_cell) + radiance);
+                let cell = cell + Vec2::x();
+                if cell.x >= display_size as i32 {
+                    return;
                 }
-            ));
 
-        // TODO: Clear the other buffers as well?
-        let clear_radiance_kernel = DEVICE.create_kernel::<fn()>(&track!(|| {
-            set_block_size([8, 8, 1]);
-            let cell = dispatch_id().xy();
-            radiance_texture.write(cell, R::black());
-        }));
+                let next_grid = Grid::new(Vec2::new(size, segments.len() as u32 * size), 2).expr();
+
+                let global_y_offset = (2 * size * rotation_index).cast_i32();
+
+                let offset = if cell.x % 2 == cell.y % 2 {
+                    0.expr()
+                } else if cell.y % 2 == 0 {
+                    (size - 1).expr()
+                } else {
+                    size.expr()
+                };
+                let radiance = merge_0::<F, _, _>(
+                    next_grid,
+                    Vec2::expr(cell.x / 2, cell.y / 2 + offset.cast_i32() + global_y_offset),
+                    (&merge_storage, &next_radiance),
+                    (
+                        &tracer,
+                        // TODO: This really isn't an elegant way of solving the edge cases, but it works.
+                        &(
+                            2 * rotation_index + (cell.x % 2 != cell.y % 2).cast_u32(),
+                            (),
+                        ),
+                    ),
+                    cell.x % 2 == 0,
+                );
+
+                radiance_texture.write(out_cell.extend(rotation_index), radiance);
+            }),
+        );
 
         Self {
             num_cascades,
@@ -210,7 +206,6 @@ impl HRCRenderer {
             merge_up_kernel,
             kernel,
             finish_kernel,
-            clear_radiance_kernel,
             radiance: radiance_texture,
         }
     }
@@ -262,31 +257,23 @@ impl HRCRenderer {
                         buffer_a,
                         buffer_b,
                     )
-                    .debug(format!("Merge {}", i))
-            })
-            .collect::<Vec<_>>()
-            .chain();
-        let finish_commands = Self::rotations()
-            .iter()
-            .enumerate()
-            .map(|(i, r)| {
-                self.finish_kernel
-                    .dispatch_async(
-                        [self.display_size, self.display_size, 1],
-                        r,
-                        &(i as u32),
-                        buffer_a,
-                    )
-                    .debug(format!("Finish {}", i))
+                    .debug(format!("Merge Down {}", i))
             })
             .collect::<Vec<_>>()
             .chain();
         (
             merge_up_commands,
             merge_commands,
-            self.clear_radiance_kernel
-                .dispatch_async([self.display_size, self.display_size, 1]),
-            finish_commands,
+            self.finish_kernel
+                .dispatch_async(
+                    [
+                        self.display_size,
+                        self.display_size,
+                        Self::rotations().len() as u32,
+                    ],
+                    buffer_a,
+                )
+                .debug("Finish"),
         )
             .chain()
     }
