@@ -33,6 +33,11 @@ pub struct HRCRenderer {
 pub struct HRCSettings {
     pub traced_levels: u32,
 }
+impl Default for HRCSettings {
+    fn default() -> Self {
+        HRCSettings { traced_levels: 2 }
+    }
+}
 
 impl HRCRenderer {
     fn rotations() -> [Vec2<i32>; 4] {
@@ -83,7 +88,8 @@ impl HRCRenderer {
         let merge_storage = BufferStorage { axes };
 
         // TODO: Don't need to store first couple of levels.
-        let cache_pyramid = (0..num_cascades + 1)
+        // Also don't need to store the last level since its only used at 0.
+        let cache_pyramid = (0..=num_cascades)
             .map(|i| {
                 DEVICE.create_buffer::<Fluence<F>>(
                     ((size >> i) * size * ((2 << i) + 1)) as usize * segments.len(),
@@ -210,7 +216,7 @@ impl HRCRenderer {
         }
     }
     pub fn render(&self) -> NodeConfigs {
-        let merge_up_commands = (0..self.num_cascades as usize + 1)
+        let merge_up_commands = (0..=self.num_cascades as usize)
             .map(|i| {
                 let grid = Grid::new(
                     Vec2::new(self.size >> i, self.segments.len() as u32 * self.size),

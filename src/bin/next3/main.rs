@@ -331,53 +331,7 @@ fn main() {
             }
         }));
 
-    let julia = DEVICE.create_kernel::<fn()>(&track!(|| {
-        let c = Vec2::<f32>::new(-0.835, -0.2321);
-        let r = 2.0;
-        assert!(r * r - r >= (c.x * c.x + c.y * c.y).sqrt());
-
-        let pos = dispatch_id().xy().cast_f32() + 0.5;
-        let pos = 2.0 * ((pos / dispatch_size().xy().cast_f32()) - Vec2::expr(0.5, 0.5)) * r * 0.7;
-        let theta = 0.0_f32;
-        let pos = Vec2::expr(
-            pos.x * theta.cos() + pos.y * theta.sin(),
-            -pos.x * theta.sin() + pos.y * theta.cos(),
-        );
-        let z = pos.var();
-
-        let iter = u32::MAX.var();
-        for i in 0_u32..1000 {
-            *z = Vec2::expr(z.x * z.x - z.y * z.y, 2.0 * z.x * z.y) + c;
-            if z.length() > r {
-                *iter = i;
-                break;
-            }
-        }
-        let color = if iter > 30 {
-            let iter = keter::min(iter, 1000);
-            let j = iter.cast_f32() / 60.0;
-            Color::<color::RgbF16>::expr(
-                Vec3::<f32>::expr(0.1 * j, 0.0, 0.0).cast_f16(),
-                Vec3::<f32>::splat_expr(0.3).cast_f16(),
-            )
-        } else {
-            let j = iter.cast_f32() / 30.0;
-            let l = if iter % 2 == 0 {
-                1.0_f32.expr()
-            } else {
-                0.0.expr()
-            };
-            Color::expr(
-                Vec3::<f32>::expr(0.0, 0.0, 0.0).cast_f16(),
-                (Vec3::<f32>::expr(0.25, 1.0, 2.5) * l * j * j).cast_f16(),
-            )
-        };
-        world.write(dispatch_id().xy(), color);
-    }));
-
-    julia.dispatch_blocking([world.size.x, world.size.y, 1]);
-
-    let scene = Scene::top();
+    let scene = Scene::sunflower4();
     for Draw {
         brush,
         center,
@@ -526,7 +480,7 @@ fn main() {
 
         if rt.just_pressed_key(KeyCode::Space) && pt_count < max_pt_count {
             compute_diff.dispatch_blocking([DISPLAY_SIZE / 8, DISPLAY_SIZE / 8, 1]);
-            let n = 48;
+            let n = 52;
             let timings = path_trace
                 .dispatch_async([DISPLAY_SIZE, DISPLAY_SIZE, 1], &pt_count, &n)
                 .execute_timed();

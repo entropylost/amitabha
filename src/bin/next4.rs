@@ -24,7 +24,7 @@ fn main() {
         .init();
     let world = VoxelTracer::<C>::new(Vec2::new(DISPLAY_SIZE, DISPLAY_SIZE));
 
-    let renderer = HRCRenderer::new(&world, DISPLAY_SIZE, HRCSettings { traced_levels: 2 });
+    let renderer = HRCRenderer::new(&world, DISPLAY_SIZE, HRCSettings::default());
 
     let draw = DEVICE.create_kernel::<fn()>(&track!(|| {
         set_block_size([8, 8, 1]);
@@ -146,11 +146,18 @@ fn main() {
             }
         }
 
-        profiler.record(renderer.render().execute_timed());
-        draw.dispatch([DISPLAY_SIZE, DISPLAY_SIZE, 1]);
+        profiler.record(
+            (
+                renderer.render(),
+                draw.dispatch_async([DISPLAY_SIZE, DISPLAY_SIZE, 1])
+                    .debug("Draw"),
+            )
+                .chain()
+                .execute_timed(),
+        );
 
         if profiler.time() > 3000.0 {
-            profiler.print(&["Merge Up", "Merge Down", "Finish"], true);
+            profiler.print(&["Merge Up", "Merge Down", "Finish", "Draw"], true);
             profiler.reset();
         }
     });

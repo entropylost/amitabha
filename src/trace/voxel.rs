@@ -213,6 +213,16 @@ impl VoxelTracer<crate::color::RgbF16> {
         BlockType::write(&self.diff.view(0), dispatch_id().xy(), **block);
     }
     #[tracked]
+    pub fn trace_opt_to(
+        &self,
+        start: Expr<Vec2<f32>>,
+        end: Expr<Vec2<f32>>,
+    ) -> Expr<Fluence<crate::fluence::RgbF16>> {
+        let delta = end - start;
+        let length = delta.length();
+        self.trace_opt(start, delta / length, length)
+    }
+    #[tracked]
     pub fn trace_opt(
         &self,
         start: Expr<Vec2<f32>>,
