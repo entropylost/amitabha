@@ -82,7 +82,7 @@ impl Scene {
         for i in 1..200 {
             let r = spacing * (i as f32).sqrt();
             let angle = i as f32 * 137.508_f32.to_radians();
-            let pos = center + Vec2::new(angle.cos(), angle.sin()) * r;
+            let pos = center + angle.direction() * r;
 
             let brightness = (1.0 - r / 150.0).max(0.0);
             let color = Oklch::new(brightness, 0.15, angle.to_degrees());
@@ -114,7 +114,7 @@ impl Scene {
         for i in 6..200 {
             let r = spacing * (i as f32).sqrt();
             let angle = i as f32 * 137.508_f32.to_radians();
-            let pos = center + Vec2::new(angle.cos(), angle.sin()) * r;
+            let pos = center + angle.direction() * r;
 
             let brightness = (r / 200.0).max(0.5);
             let color = Oklch::new(brightness, 0.15, angle.to_degrees());
@@ -139,7 +139,7 @@ impl Scene {
         for i in 1..200 {
             let r = spacing * (i as f32).sqrt();
             let angle = i as f32 * 137.508_f32.to_radians();
-            let pos = center + Vec2::new(angle.cos(), angle.sin()) * r;
+            let pos = center + angle.direction() * r;
 
             let brightness = (1.0 - r / 150.0).max(0.0);
             let opacity = (r / 200.0).max(0.5);
@@ -168,7 +168,7 @@ impl Scene {
         for i in 1..100 {
             let r = spacing * (i as f32).sqrt();
             let angle = i as f32 * 137.508_f32.to_radians();
-            let pos = center + Vec2::new(angle.cos(), angle.sin()) * r;
+            let pos = center + angle.direction() * r;
 
             let brightness = (1.0 - r / 150.0).max(0.0);
             let color = Oklch::new(brightness, 0.15, angle.to_degrees());

@@ -281,7 +281,7 @@ fn main() {
             //     TAU * amitabha::utils::pcgf(dispatch_id().x + (dispatch_id().y << 10) + (t << 20));
             // let dir = dir + theta + amitabha::utils::pcgf((r / 1.5).cast_u32()) * TAU;
             let dir = dir + amitabha::utils::pcgf(dispatch_id().x + (dispatch_id().y << 16)) * TAU;
-            let dir = Vec2::expr(dir.cos(), dir.sin());
+            let dir = dir.direction();
             let radiance = tracer
                 .tracer
                 .trace_opt(world_pos, dir, (2.0 * DISPLAY_SIZE as f32).expr())

@@ -277,10 +277,7 @@ impl VoxelTracer<crate::color::RgbF16> {
 
                     if BlockType::get(block, pos % BlockType::SIZE) || next_t >= end_t {
                         let segment_size = keter::min(next_t, end_t) - last_t;
-                        let color = Color::<crate::color::RgbF16>::expr(
-                            self.emission.read(pos),
-                            self.opacity.read(pos),
-                        );
+                        let color = self.read(**pos);
                         *fluence = fluence.over(color.to_fluence(segment_size));
 
                         *last_t = next_t;
@@ -320,10 +317,7 @@ impl VoxelTracer<crate::color::RgbF16> {
                 loop {
                     if next_t >= end_t {
                         let segment_size = end_t - last_t;
-                        let color = Color::<crate::color::RgbF16>::expr(
-                            self.emission.read(pos),
-                            self.opacity.read(pos),
-                        );
+                        let color = self.read(**pos);
                         *fluence = fluence.over(color.to_fluence(segment_size));
 
                         *finished = true;
@@ -382,6 +376,7 @@ where
         ray_dir: Expr<Vec2<f32>>,
         length: Expr<f32>,
     ) -> Expr<Fluence<F>> {
+        // TODO: Remove, and instead bias the initialization.
         let start = start + Vec2::new(0.001, 0.001);
         let inv_dir = (ray_dir + f32::EPSILON).recip();
         let interval = aabb_intersect(
@@ -412,7 +407,7 @@ where
 
             loop {
                 let next_t = side_dist.reduce_min();
-                let color = Color::<C>::expr(self.emission.read(pos), self.opacity.read(pos));
+                let color = self.read(**pos);
                 let segment_size = keter::min(next_t, end_t) - last_t;
                 *fluence = fluence.over(color.to_fluence(segment_size));
                 *last_t = next_t;

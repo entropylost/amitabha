@@ -52,6 +52,10 @@ pub fn pcg_host(v: u32) -> u32 {
     (word >> 22u32) ^ word
 }
 
+pub fn pcgf_host(v: u32) -> f32 {
+    pcg_host(v) as f32 / u32::MAX as f32
+}
+
 /*
 Taken from: https://www.shadertoy.com/view/tlcSzs
 

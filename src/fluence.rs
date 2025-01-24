@@ -16,6 +16,12 @@ impl<F: FluenceType> Fluence<F> {
             transmittance,
         })
     }
+    pub fn new(radiance: F::Radiance, transmittance: F::Transmittance) -> Self {
+        Fluence {
+            radiance,
+            transmittance,
+        }
+    }
     pub fn empty() -> Self {
         Fluence {
             radiance: F::Radiance::black(),
@@ -26,6 +32,12 @@ impl<F: FluenceType> Fluence<F> {
         Fluence {
             radiance,
             transmittance: F::Transmittance::opaque(),
+        }
+    }
+    pub fn dark(transmittance: F::Transmittance) -> Self {
+        Fluence {
+            radiance: F::Radiance::black(),
+            transmittance,
         }
     }
     #[tracked]
