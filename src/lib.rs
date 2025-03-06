@@ -38,17 +38,17 @@ impl Grid {
 impl GridExpr {
     #[tracked]
     pub fn next(self) -> Expr<Grid> {
-        Grid::from_comps_expr(GridComps {
-            size: Vec2::expr(self.size.x / 2, self.size.y),
-            directions: self.directions * 2,
-        })
+        Grid::expr(
+            Vec2::expr(self.size.x / 2, self.size.y),
+            self.directions * 2,
+        )
     }
     #[tracked]
     pub fn last(self) -> Expr<Grid> {
-        Grid::from_comps_expr(GridComps {
-            size: Vec2::expr(self.size.x * 2, self.size.y),
-            directions: self.directions / 2,
-        })
+        Grid::expr(
+            Vec2::expr(self.size.x * 2, self.size.y),
+            self.directions / 2,
+        )
     }
 
     #[tracked]
