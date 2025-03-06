@@ -19,7 +19,6 @@ type C = color::RgbF16;
 fn main() {
     let app = App::new("Amitabha", [DISPLAY_SIZE; 2])
         .scale(2048 / DISPLAY_SIZE)
-        .dpi(2.0)
         .agx()
         .init();
     let world = VoxelTracer::<C>::new(Vec2::new(DISPLAY_SIZE, DISPLAY_SIZE));
@@ -116,7 +115,7 @@ fn main() {
 
     let mut profiler = Profiler::new();
 
-    app.run(|rt, _scope| {
+    app.run(|rt| {
         let brushes = [
             (
                 MouseButton::Middle,
@@ -136,7 +135,7 @@ fn main() {
             ),
         ];
         for brush in brushes {
-            if rt.pressed_button(brush.0) {
+            if rt.button_down(brush.0) {
                 circle_brush.dispatch(
                     [world.size.x, world.size.y, 1],
                     &rt.cursor_position,

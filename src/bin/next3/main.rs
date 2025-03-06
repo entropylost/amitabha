@@ -29,7 +29,6 @@ fn main() {
 
     let app = App::new("Amitabha", [DISPLAY_SIZE; 2])
         .scale(2048 / DISPLAY_SIZE)
-        .dpi(2.0)
         .agx()
         .init();
 
@@ -375,7 +374,7 @@ fn main() {
     let mut last_print_time = Instant::now();
     let mut last_print_tick = 0;
 
-    app.run(|rt, _scope| {
+    app.run(|rt| {
         let brushes = [
             (
                 MouseButton::Middle,
@@ -395,7 +394,7 @@ fn main() {
             ),
         ];
         for brush in brushes {
-            if rt.pressed_button(brush.0) {
+            if rt.button_down(brush.0) {
                 circle_brush.dispatch(
                     [world.size.x, world.size.y, 1],
                     &rt.cursor_position,
@@ -432,7 +431,12 @@ fn main() {
             .chain();
         let timings = merge_up_commands.execute_timed();
         for (name, time) in timings.iter() {
-            let i = name.split('-').last().unwrap().parse::<usize>().unwrap();
+            let i = name
+                .split('-')
+                .next_back()
+                .unwrap()
+                .parse::<usize>()
+                .unwrap();
             merge_up_timings[i].push(*time as f64);
         }
 
@@ -467,7 +471,12 @@ fn main() {
         let timings = merge_commands.execute_timed();
         for (name, time) in timings.iter() {
             if name != "blur" {
-                let i = name.split('-').last().unwrap().parse::<usize>().unwrap();
+                let i = name
+                    .split('-')
+                    .next_back()
+                    .unwrap()
+                    .parse::<usize>()
+                    .unwrap();
                 merge_timings[i].push(*time as f64);
             }
         }
@@ -478,7 +487,7 @@ fn main() {
         filter.dispatch([DISPLAY_SIZE, DISPLAY_SIZE, 1]);
         reset_texture.dispatch([DISPLAY_SIZE, DISPLAY_SIZE, 1], &radiance_texture);
 
-        if rt.just_pressed_key(KeyCode::Space) && pt_count < max_pt_count {
+        if rt.key_pressed(KeyCode::Space) && pt_count < max_pt_count {
             compute_diff.dispatch_blocking([DISPLAY_SIZE / 8, DISPLAY_SIZE / 8, 1]);
             let n = 52;
             let timings = path_trace
@@ -490,13 +499,13 @@ fn main() {
                 println!("Path tracing finished");
             }
         }
-        if rt.just_pressed_key(KeyCode::Space) {
+        if rt.key_pressed(KeyCode::Space) {
             running_pt = !running_pt;
         }
-        if rt.just_pressed_key(KeyCode::KeyP) {
+        if rt.key_pressed(KeyCode::KeyP) {
             display_pt = !display_pt;
         }
-        if rt.just_pressed_key(KeyCode::KeyD) {
+        if rt.key_pressed(KeyCode::KeyD) {
             display_diff = !display_diff;
         }
         draw_pt.dispatch([DISPLAY_SIZE, DISPLAY_SIZE, 1], &pt_count);
@@ -517,7 +526,7 @@ fn main() {
             hrc_radiance.view(0).copy_to_texture(&rt.display().view(0));
         }
 
-        if rt.just_pressed_key(KeyCode::KeyB) {
+        if rt.key_pressed(KeyCode::KeyB) {
             display_solid = !display_solid;
         }
         if display_solid {
