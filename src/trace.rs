@@ -310,7 +310,7 @@ impl<F: FluenceType, T: WorldTracer<F>> Tracer<F> for WorldMapper<F, T> {
     }
 }
 
-mod voxel;
+pub mod voxel;
 pub use voxel::VoxelTracer;
 
 #[repr(C)]

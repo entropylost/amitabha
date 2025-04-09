@@ -13,7 +13,7 @@ use keter::lang::types::vector::{Vec2, Vec3};
 use keter::prelude::*;
 use keter_testbed::{App, KeyCode, MouseButton};
 
-const DISPLAY_SIZE: u32 = 1024;
+const DISPLAY_SIZE: u32 = 512;
 const SIZE: u32 = DISPLAY_SIZE / 2;
 const SEGMENTS: u32 = 4 * 2;
 
@@ -306,12 +306,25 @@ fn main() {
         DEVICE.create_tex2d::<f32>(PixelStorage::Float1, DISPLAY_SIZE, DISPLAY_SIZE, 1);
 
     let compute_difference = DEVICE.create_kernel::<fn(f32)>(&track!(|scale| {
+        use amitabha::trace::voxel::*;
         let pos = dispatch_id().xy();
-        let a = hrc_radiance.read(pos);
-        let b = pt_radiance.read(pos);
-        let diff = (a - b).abs() * scale;
-        radiance_diff.write(pos, (a - b).abs().reduce_max());
-        app.display().write(pos, diff);
+        let block = BlockType::read(&tracer.tracer.diff.view(0), pos / BlockType::SIZE);
+        let blend_factor = BlockType::get(block, pos % BlockType::SIZE)
+            .cast_u32()
+            .cast_f32()
+            * 0.3
+            + (!BlockType::is_empty(block)).cast_u32().cast_f32() * 0.5;
+        app.display().write(
+            pos,
+            app.display()
+                .read(pos)
+                .lerp(Vec3::expr(0.03, 0.08, 0.13), blend_factor),
+        );
+        // let a = hrc_radiance.read(pos);
+        // let b = pt_radiance.read(pos);
+        // let diff = (a - b).abs() * scale;
+        // radiance_diff.write(pos, (a - b).length());
+        // app.display().write(pos, diff);
     }));
 
     let rect_brush = DEVICE.create_kernel::<fn(Vec2<f32>, Vec2<f32>, Color<C>)>(&track!(
@@ -330,32 +343,61 @@ fn main() {
             }
         }));
 
-    let scene = Scene::sunflower4();
-    for Draw {
-        brush,
-        center,
-        color,
-    } in scene.draws
-    {
-        match brush {
-            Brush::Rect(width, height) => {
-                rect_brush.dispatch(
-                    [world.size.x, world.size.y, 1],
-                    &center,
-                    &Vec2::new(width, height),
-                    &Color::from(color),
-                );
-            }
-            Brush::Circle(radius) => {
-                circle_brush.dispatch(
-                    [world.size.x, world.size.y, 1],
-                    &center,
-                    &radius,
-                    &Color::from(color),
-                );
+    let julia = DEVICE.create_kernel::<fn()>(&track!(|| {
+        let c = Vec2::<f32>::new(-0.835, -0.2321);
+        let r = 2.0;
+        assert!(r * r - r >= (c.x * c.x + c.y * c.y).sqrt());
+
+        let pos = dispatch_id().xy().cast_f32() + 0.5;
+        let pos = 2.0 * ((pos / dispatch_size().xy().cast_f32()) - Vec2::expr(0.5, 0.5)) * r * 0.7;
+        let theta = 0.0_f32;
+        let pos = Vec2::expr(
+            pos.x * theta.cos() + pos.y * theta.sin(),
+            -pos.x * theta.sin() + pos.y * theta.cos(),
+        );
+        let z = pos.var();
+
+        let iter = u32::MAX.var();
+        for i in 0_u32..1000 {
+            *z = Vec2::expr(z.x * z.x - z.y * z.y, 2.0 * z.x * z.y) + c;
+            if z.length() > r {
+                *iter = i;
+                break;
             }
         }
-    }
+        let color = if iter > 30 {
+            let iter = keter::min(iter, 1000);
+            let j = iter.cast_f32() / 60.0;
+            Color::<color::RgbF16>::expr(
+                Vec3::<f32>::expr(0.1 * j, 0.0, 0.0).cast_f16(),
+                Vec3::<f32>::splat_expr(0.3).cast_f16(),
+            )
+        } else {
+            let j = iter.cast_f32() / 30.0;
+            let l = if iter % 2 == 0 {
+                1.0_f32.expr()
+            } else {
+                0.0.expr()
+            };
+            Color::expr(
+                Vec3::<f32>::expr(0.0, 0.0, 0.0).cast_f16(),
+                (Vec3::<f32>::expr(0.25, 1.0, 2.5) * l * j * j).cast_f16(),
+            )
+        };
+        world.write(dispatch_id().xy(), color);
+    }));
+
+    julia.dispatch_blocking([DISPLAY_SIZE, DISPLAY_SIZE, 1]);
+
+    rect_brush.dispatch(
+        [DISPLAY_SIZE, DISPLAY_SIZE, 1],
+        &Vec2::new(0.0, 0.0),
+        &Vec2::new(10000.0, 10.0),
+        &Color::new(
+            Vec3::splat(f16::from_f32(5.0)),
+            Vec3::splat(f16::from_f32(0.5)),
+        ),
+    );
 
     let draw_solid = DEVICE.create_kernel::<fn()>(&track!(|| {
         let pos = dispatch_id().xy();
@@ -510,6 +552,14 @@ fn main() {
         }
         draw_pt.dispatch([DISPLAY_SIZE, DISPLAY_SIZE, 1], &pt_count);
 
+        if display_pt {
+            pt_radiance.view(0).copy_to_texture(&rt.display().view(0));
+            // if last_print_time.elapsed().as_secs() > 5 {
+            //     println!("Paths: {:?}", pt_count);
+            // }
+        } else {
+            hrc_radiance.view(0).copy_to_texture(&rt.display().view(0));
+        }
         if display_diff {
             compute_difference.dispatch([DISPLAY_SIZE, DISPLAY_SIZE, 1], &50.0);
             if rt.tick % 100 == 0 {
@@ -517,13 +567,6 @@ fn main() {
                 let mse = diff.iter().map(|x| (*x as f64).powi(2)).sum::<f64>() / diff.len() as f64;
                 println!("Error: {}", mse.sqrt());
             }
-        } else if display_pt {
-            pt_radiance.view(0).copy_to_texture(&rt.display().view(0));
-            // if last_print_time.elapsed().as_secs() > 5 {
-            //     println!("Paths: {:?}", pt_count);
-            // }
-        } else {
-            hrc_radiance.view(0).copy_to_texture(&rt.display().view(0));
         }
 
         if rt.key_pressed(KeyCode::KeyB) {
