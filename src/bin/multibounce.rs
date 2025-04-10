@@ -34,10 +34,10 @@ impl SceneColor {
             diffuse,
         }
     }
-    fn dark(opacity: Vec3<f32>) -> Self {
+    fn dark(opacity: Vec3<f32>, diffuse: Vec3<f32>) -> Self {
         Self {
             emission: Vec3::splat(0.0),
-            diffuse: Vec3::splat(0.0),
+            diffuse,
             opacity,
         }
     }
@@ -135,7 +135,7 @@ impl Scene {
                 Draw {
                     brush: Brush::Rect(48.0, 96.0),
                     center: Vec2::new(384.0, 416.0 - 10.0),
-                    color: SceneColor::dark(Vec3::new(0.03, 0.02, 0.03)),
+                    color: SceneColor::dark(Vec3::new(0.03, 0.02, 0.03), Vec3::splat(0.8)),
                 },
             ],
         }
