@@ -99,7 +99,7 @@ impl Block for u64 {
     }
 }
 
-pub type BlockType = u64;
+type BlockType = u64;
 
 pub struct VoxelTracer<C: ColorType>
 where
