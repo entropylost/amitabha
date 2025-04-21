@@ -13,7 +13,7 @@ use keter::lang::types::vector::{Vec2, Vec3};
 use keter::prelude::*;
 use keter_testbed::{App, KeyCode, MouseButton};
 
-const DISPLAY_SIZE: u32 = 1024;
+const DISPLAY_SIZE: u32 = 256;
 const SIZE: u32 = DISPLAY_SIZE / 2;
 const SEGMENTS: u32 = 4 * 2;
 
@@ -29,6 +29,7 @@ fn main() {
 
     let app = App::new("Amitabha", [DISPLAY_SIZE; 2])
         .scale(2048 / DISPLAY_SIZE)
+        // .gamma(1.0)
         .agx()
         .init();
 
@@ -53,8 +54,8 @@ fn main() {
             segments.push(WorldSegment {
                 rotation: r,
                 origin: Vec2::splat(half_size) - half_size * diag
-                    + y_dir * (y_offset as f32 + 0.499)
-                    + x_dir * 0.501, // Hack to avoid "corner" cases.
+                    + y_dir * (y_offset as f32 + 0.5)
+                    + x_dir * 0.5001, // Hack to avoid "corner" cases.
                 size: Vec2::splat(half_size * 2.0),
                 offset: SIZE * segments.len() as u32,
             });
@@ -221,7 +222,7 @@ fn main() {
     let filter = DEVICE.create_kernel::<fn()>(&track!(|| {
         set_block_size([8, 8, 1]);
 
-        let final_blur = 0.25;
+        let final_blur = 0.25; // 0.25; // 0.25;
 
         let pos = dispatch_id().xy();
         let denom = 0.0.var();
@@ -262,14 +263,14 @@ fn main() {
         DEVICE.create_tex2d::<Vec3<f32>>(PixelStorage::Float4, DISPLAY_SIZE, DISPLAY_SIZE, 1);
     let mut pt_count = 0;
     let max_radiance = 16.0 * 8192.0_f64;
-    let max_pt_count = 10946; // Fibonacci number
+    let max_pt_count = 16384; // Fibonacci number
     let path_trace = DEVICE.create_kernel::<fn(u32, u32)>(&track!(|t, n| {
         set_block_size([8, 8, 1]);
         let world_pos = dispatch_id().xy().cast_f32() + Vec2::splat(0.5);
         let total_radiance = Vec3::splat(0_u32).var();
         for i in 0.expr()..n {
             let t = t + i;
-            let offset = 6765; // Adjacent fibonacci number.
+            let offset = 1; // Adjacent fibonacci number.
 
             let dir = (((offset * t) % max_pt_count).cast_f32() / max_pt_count as f32) * TAU;
 
@@ -310,7 +311,7 @@ fn main() {
         let a = hrc_radiance.read(pos);
         let b = pt_radiance.read(pos);
         let diff = (a - b).abs() * scale;
-        radiance_diff.write(pos, (a - b).abs().reduce_max());
+        radiance_diff.write(pos, (a - b).x);
         app.display().write(pos, diff);
     }));
 
@@ -330,7 +331,7 @@ fn main() {
             }
         }));
 
-    let scene = Scene::sunflower4();
+    let scene = Scene::point();
     for Draw {
         brush,
         center,
@@ -443,8 +444,8 @@ fn main() {
         let merge_commands = (0..num_cascades)
             .rev()
             .map(|i| {
-                let blur_factor = 0.5_f32 * 0.75_f32.powi((num_cascades - 1 - i) as i32);
-                // swap(&mut buffer_a, &mut buffer_b);
+                let blur_factor = 0.0; // 0.5_f32 * 0.75_f32.powi((num_cascades - 1 - i) as i32);
+                                       // swap(&mut buffer_a, &mut buffer_b);
                 let grid = Grid::new(Vec2::new(SIZE >> i, SEGMENTS * SIZE), 2 << i);
                 (
                     kernel
@@ -489,7 +490,7 @@ fn main() {
 
         if rt.key_pressed(KeyCode::Space) && pt_count < max_pt_count {
             compute_diff.dispatch_blocking([DISPLAY_SIZE / 8, DISPLAY_SIZE / 8, 1]);
-            let n = 52;
+            let n = 512;
             let timings = path_trace
                 .dispatch_async([DISPLAY_SIZE, DISPLAY_SIZE, 1], &pt_count, &n)
                 .execute_timed();
@@ -514,6 +515,7 @@ fn main() {
             compute_difference.dispatch([DISPLAY_SIZE, DISPLAY_SIZE, 1], &50.0);
             if rt.tick % 100 == 0 {
                 let diff = radiance_diff.view(0).copy_to_vec::<f32>();
+                // std::fs::write("diff2.txt", format!("{:?}", diff)).unwrap();
                 let mse = diff.iter().map(|x| (*x as f64).powi(2)).sum::<f64>() / diff.len() as f64;
                 println!("Error: {}", mse.sqrt());
             }

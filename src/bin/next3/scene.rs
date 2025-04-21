@@ -234,9 +234,9 @@ impl Scene {
     pub fn point() -> Self {
         Self {
             draws: vec![Draw {
-                brush: Brush::Rect(4.1, 4.1),
-                center: Vec2::new(256.0, 256.0),
-                color: SceneColor::new(Vec3::new(1.0, 1.5, 1.0), Vec3::splat(1000.0)),
+                brush: Brush::Rect(1.1, 1.1),
+                center: Vec2::new(128.0, 128.0),
+                color: SceneColor::new(Vec3::new(10.0, 10.0, 10.0), Vec3::splat(100.0)),
             }],
         }
     }
