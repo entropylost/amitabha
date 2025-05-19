@@ -13,7 +13,7 @@ use keter::lang::types::vector::{Vec2, Vec3};
 use keter::prelude::*;
 use keter_testbed::{App, KeyCode, MouseButton};
 
-const DISPLAY_SIZE: u32 = 256;
+const DISPLAY_SIZE: u32 = 1024;
 const SIZE: u32 = DISPLAY_SIZE / 2;
 const SEGMENTS: u32 = 4 * 2;
 
@@ -331,33 +331,6 @@ fn main() {
             }
         }));
 
-    let scene = Scene::point();
-    for Draw {
-        brush,
-        center,
-        color,
-    } in scene.draws
-    {
-        match brush {
-            Brush::Rect(width, height) => {
-                rect_brush.dispatch(
-                    [world.size.x, world.size.y, 1],
-                    &center,
-                    &Vec2::new(width, height),
-                    &Color::from(color),
-                );
-            }
-            Brush::Circle(radius) => {
-                circle_brush.dispatch(
-                    [world.size.x, world.size.y, 1],
-                    &center,
-                    &radius,
-                    &Color::from(color),
-                );
-            }
-        }
-    }
-
     let draw_solid = DEVICE.create_kernel::<fn()>(&track!(|| {
         let pos = dispatch_id().xy();
         if (world.read_opacity(pos) != f16::ZERO).any() {
@@ -376,6 +349,40 @@ fn main() {
     let mut last_print_tick = 0;
 
     app.run(|rt| {
+        if rt.tick == 0 {
+            rt.begin_recording(None, false);
+        }
+        if rt.tick == 200 {
+            rt.finish_recording();
+        }
+
+        let scene = Scene::pinhole(rt.tick);
+        for Draw {
+            brush,
+            center,
+            color,
+        } in scene.draws
+        {
+            match brush {
+                Brush::Rect(width, height) => {
+                    rect_brush.dispatch(
+                        [world.size.x, world.size.y, 1],
+                        &center,
+                        &Vec2::new(width, height),
+                        &Color::from(color),
+                    );
+                }
+                Brush::Circle(radius) => {
+                    circle_brush.dispatch(
+                        [world.size.x, world.size.y, 1],
+                        &center,
+                        &radius,
+                        &Color::from(color),
+                    );
+                }
+            }
+        }
+
         let brushes = [
             (
                 MouseButton::Middle,

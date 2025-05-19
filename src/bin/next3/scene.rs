@@ -7,10 +7,12 @@ use palette::{FromColor, LinSrgb, Oklch};
 
 const DISPLAY_SIZE: f32 = 512.0;
 
+#[derive(Debug, Clone, Copy)]
 pub enum Brush {
     Rect(f32, f32),
     Circle(f32),
 }
+#[derive(Debug, Clone, Copy)]
 pub struct SceneColor {
     emission: Vec3<f32>,
     opacity: Vec3<f32>,
@@ -49,6 +51,7 @@ impl From<SceneColor> for Color<RgbF16> {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
 pub struct Draw {
     pub brush: Brush,
     pub center: Vec2<f32>,
@@ -245,6 +248,11 @@ impl Scene {
     pub fn pinhole(t: u32) -> Self {
         let l = (t as f32 / 200.0 * TAU).sin() * 200.0;
         let mut draws = vec![
+            Draw {
+                brush: Brush::Rect(1025.0, 1025.0),
+                center: Vec2::new(0.0, 0.0),
+                color: SceneColor::dark(Vec3::splat(0.0)),
+            },
             Draw {
                 brush: Brush::Rect(1.0, 512.0 + l),
                 center: Vec2::new(512.0, -5.0),
