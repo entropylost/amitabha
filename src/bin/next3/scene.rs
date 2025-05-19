@@ -1,3 +1,5 @@
+use std::f32::consts::TAU;
+
 use amitabha::color::{Color, RgbF16};
 use keter::lang::types::vector::{Vec2, Vec3};
 use keter::prelude::*;
@@ -234,21 +236,22 @@ impl Scene {
     pub fn point() -> Self {
         Self {
             draws: vec![Draw {
-                brush: Brush::Rect(1.1, 1.1),
-                center: Vec2::new(128.0, 128.0),
-                color: SceneColor::new(Vec3::new(10.0, 10.0, 10.0), Vec3::splat(100.0)),
+                brush: Brush::Circle(8.1),
+                center: Vec2::new(1024.0, 1024.0),
+                color: SceneColor::new(Vec3::splat(10.0 / 8.0), Vec3::splat(10.0)),
             }],
         }
     }
-    pub fn pinhole() -> Self {
+    pub fn pinhole(t: u32) -> Self {
+        let l = (t as f32 / 200.0 * TAU).sin() * 200.0;
         let mut draws = vec![
             Draw {
-                brush: Brush::Rect(1.0, 512.0),
+                brush: Brush::Rect(1.0, 512.0 + l),
                 center: Vec2::new(512.0, -5.0),
                 color: SceneColor::solid(Vec3::splat(0.0)),
             },
             Draw {
-                brush: Brush::Rect(1.0, 512.0),
+                brush: Brush::Rect(1.0, 512.0 - l),
                 center: Vec2::new(512.0, 1024.0 + 5.0),
                 color: SceneColor::solid(Vec3::splat(0.0)),
             },
@@ -258,7 +261,7 @@ impl Scene {
             let color = LinSrgb::from_color(color);
             draws.push(Draw {
                 brush: Brush::Rect(5.0, 20.0),
-                center: Vec2::new(1000.0, i as f32 * 40.0 + 512.0),
+                center: Vec2::new(1024.0 - 1000.0, -i as f32 * 40.0 + 512.0),
                 color: SceneColor::solid(Vec3::new(
                     50.0 * color.red.max(0.0) as f32,
                     50.0 * color.green.max(0.0) as f32,

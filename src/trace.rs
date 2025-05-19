@@ -341,11 +341,18 @@ fn intersect_circle(
     }
 }
 
-pub struct AnalyticTracer<F: FluenceType> {
-    pub buffer: Buffer<Circle<F::Radiance>>,
+pub struct AnalyticTracer<R: Radiance> {
+    pub buffer: Buffer<Circle<R>>,
+}
+impl<R: Radiance> AnalyticTracer<R> {
+    pub fn new(circles: &[Circle<R>]) -> Self {
+        Self {
+            buffer: DEVICE.create_buffer_from_slice(circles),
+        }
+    }
 }
 
-impl<F: FluenceType> WorldTracer<F> for AnalyticTracer<F> {
+impl<F: FluenceType> WorldTracer<F> for AnalyticTracer<F::Radiance> {
     type Params = ();
     #[tracked]
     fn trace(
