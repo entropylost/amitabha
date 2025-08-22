@@ -215,7 +215,7 @@ impl HRCRenderer {
             radiance: radiance_texture,
         }
     }
-    pub fn render(&self) -> NodeConfigs {
+    pub fn render(&self) -> NodeConfigs<'_> {
         let merge_up_commands = (0..=self.num_cascades as usize)
             .map(|i| {
                 let grid = Grid::new(
@@ -237,7 +237,7 @@ impl HRCRenderer {
                         &self.cache_pyramid[i],
                     )
                 }
-                .debug(format!("Merge Up {}", i))
+                .debug(format!("Merge Up {i}"))
             })
             .collect::<Vec<_>>()
             .chain();
@@ -263,7 +263,7 @@ impl HRCRenderer {
                         buffer_a,
                         buffer_b,
                     )
-                    .debug(format!("Merge Down {}", i))
+                    .debug(format!("Merge Down {i}"))
             })
             .collect::<Vec<_>>()
             .chain();

@@ -433,7 +433,7 @@ fn main() {
                         &cache_pyramid[i],
                     )
                 }
-                .debug(format!("merge-up-{}", i))
+                .debug(format!("merge-up-{i}"))
             })
             .collect::<Vec<_>>()
             .chain();
@@ -462,7 +462,7 @@ fn main() {
                             &buffer_b,
                             &buffer_a,
                         )
-                        .debug(format!("merge-{}", i)),
+                        .debug(format!("merge-{i}")),
                     blur.dispatch_async(
                         [SIZE >> i, SEGMENTS * SIZE, 2 << i],
                         &grid,
@@ -501,7 +501,7 @@ fn main() {
             let timings = path_trace
                 .dispatch_async([DISPLAY_SIZE, DISPLAY_SIZE, 1], &pt_count, &n)
                 .execute_timed();
-            println!("{:?}", timings);
+            println!("{timings:?}");
             pt_count += n;
             if pt_count == max_pt_count {
                 println!("Path tracing finished");
@@ -520,7 +520,7 @@ fn main() {
 
         if display_diff {
             compute_difference.dispatch([DISPLAY_SIZE, DISPLAY_SIZE, 1], &50.0);
-            if rt.tick % 100 == 0 {
+            if rt.tick.is_multiple_of(100) {
                 let diff = radiance_diff.view(0).copy_to_vec::<f32>();
                 // std::fs::write("diff2.txt", format!("{:?}", diff)).unwrap();
                 let mse = diff.iter().map(|x| (*x as f64).powi(2)).sum::<f64>() / diff.len() as f64;

@@ -2,14 +2,15 @@
 
 use std::f32::consts::PI;
 
-use amitabha::color::{Color, Emission};
+use amitabha::color::Color;
 use amitabha::render::{HRCRenderer, HRCSettings};
 use amitabha::trace::VoxelTracer;
 use amitabha::{color, fluence};
 use keter::graph::profile::Profiler;
+use keter::graph::NodeConfigs;
 use keter::lang::types::vector::{Vec2, Vec3};
 use keter::prelude::*;
-use keter_testbed::{App, MouseButton};
+use keter_testbed::{App, KeyCode};
 
 const DISPLAY_SIZE: u32 = 512;
 
@@ -27,6 +28,7 @@ pub struct SceneColor {
     diffuse: Vec3<f32>,
 }
 impl SceneColor {
+    #[expect(dead_code)]
     fn new(emission: Vec3<f32>, opacity: Vec3<f32>, diffuse: Vec3<f32>) -> Self {
         Self {
             emission,
@@ -228,7 +230,11 @@ fn main() {
     app.run(|rt| {
         profiler.record(
             (
-                renderer.render(),
+                if rt.key_pressed(KeyCode::Space) {
+                    renderer.render()
+                } else {
+                    NodeConfigs::default()
+                },
                 draw.dispatch_async([DISPLAY_SIZE, DISPLAY_SIZE, 1])
                     .debug("Draw"),
             )

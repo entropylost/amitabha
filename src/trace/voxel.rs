@@ -376,8 +376,7 @@ where
         ray_dir: Expr<Vec2<f32>>,
         length: Expr<f32>,
     ) -> Expr<Fluence<F>> {
-        // TODO: Remove, and instead bias the initialization.
-        let start = start; //  + Vec2::new(0.001, 0.001);
+        // let start = start + Vec2::new(0.001, 0.001);
         let inv_dir = (ray_dir + f32::EPSILON).recip();
         let interval = aabb_intersect(
             start,

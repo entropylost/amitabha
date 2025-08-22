@@ -1,21 +1,13 @@
 #![feature(more_float_constants)]
 
-use std::f32::consts::PI;
-
-use amitabha::color::{Color, Emission};
 use amitabha::render::{HRCRenderer, HRCSettings};
-use amitabha::trace::{AnalyticTracer, Circle, VoxelTracer};
-use amitabha::{color, fluence};
+use amitabha::trace::{AnalyticTracer, Circle};
 use keter::graph::profile::Profiler;
 use keter::lang::types::vector::{Vec2, Vec3};
 use keter::prelude::*;
-use keter_testbed::{App, MouseButton};
+use keter_testbed::App;
 
 const DISPLAY_SIZE: u32 = 1024;
-
-type F = fluence::RgbF16;
-type C = color::RgbF16;
-
 fn main() {
     let app = App::new("Amitabha", [DISPLAY_SIZE; 2])
         .scale(2048 / DISPLAY_SIZE)

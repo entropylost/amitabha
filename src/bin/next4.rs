@@ -89,14 +89,14 @@ fn main() {
     julia.dispatch_blocking([DISPLAY_SIZE, DISPLAY_SIZE, 1]);
     */
 
-    let rect_brush = DEVICE.create_kernel::<fn(Vec2<f32>, Vec2<f32>, Color<C>)>(&track!(
-        |center, size, color| {
-            let pos = dispatch_id().xy();
-            if ((pos.cast_f32() + 0.5 - center).abs() < size).all() {
-                world.write(pos, color);
-            }
-        }
-    ));
+    // let rect_brush = DEVICE.create_kernel::<fn(Vec2<f32>, Vec2<f32>, Color<C>)>(&track!(
+    //     |center, size, color| {
+    //         let pos = dispatch_id().xy();
+    //         if ((pos.cast_f32() + 0.5 - center).abs() < size).all() {
+    //             world.write(pos, color);
+    //         }
+    //     }
+    // ));
     let circle_brush =
         DEVICE.create_kernel::<fn(Vec2<f32>, f32, Color<C>)>(&track!(|center, radius, color| {
             let pos = dispatch_id().xy();
