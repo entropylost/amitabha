@@ -11,7 +11,7 @@ use keter::lang::types::vector::{Vec2, Vec3};
 use keter::prelude::*;
 use keter_testbed::{App, MouseButton};
 
-const DISPLAY_SIZE: u32 = 1024;
+const DISPLAY_SIZE: u32 = 512;
 
 type F = fluence::RgbF16;
 type C = color::RgbF16;
@@ -41,6 +41,7 @@ fn main() {
         app.display().write(cell, radiance.cast_f32());
     }));
 
+    /*
     let julia = DEVICE.create_kernel::<fn()>(&track!(|| {
         let c = Vec2::<f32>::new(-0.835, -0.2321);
         let r = 2.0;
@@ -86,6 +87,7 @@ fn main() {
     }));
 
     julia.dispatch_blocking([DISPLAY_SIZE, DISPLAY_SIZE, 1]);
+    */
 
     let rect_brush = DEVICE.create_kernel::<fn(Vec2<f32>, Vec2<f32>, Color<C>)>(&track!(
         |center, size, color| {
@@ -103,10 +105,10 @@ fn main() {
             }
         }));
 
-    rect_brush.dispatch(
+    circle_brush.dispatch(
         [DISPLAY_SIZE, DISPLAY_SIZE, 1],
-        &Vec2::new(0.0, 0.0),
-        &Vec2::new(10000.0, 10.0),
+        &Vec2::new(256.0, 256.0),
+        &10.0, // &Vec2::new(10.0, 10.0),
         &Color::new(
             Vec3::splat(f16::from_f32(5.0)),
             Vec3::splat(f16::from_f32(0.5)),
