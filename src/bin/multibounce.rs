@@ -58,11 +58,7 @@ impl SceneColor {
         }
     }
     fn diffuse(&self) -> Vec3<f16> {
-        Vec3::new(
-            f16::from_f32(self.diffuse.x),
-            f16::from_f32(self.diffuse.y),
-            f16::from_f32(self.diffuse.z),
-        )
+        self.diffuse.map(f16::from_f32)
     }
 }
 impl From<SceneColor> for Color<C> {

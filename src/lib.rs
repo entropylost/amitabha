@@ -20,6 +20,9 @@ pub mod utils;
 
 pub mod render;
 
+#[cfg(feature = "debug-scenes")]
+pub mod scene;
+
 #[derive(Debug, Clone, Copy, Value)]
 #[repr(C)]
 pub struct Grid {
