@@ -13,21 +13,25 @@ Other implementations:
 
 <table align="center">
     <tr>
-    <td align="center"><a href="src/bin/multibounce.rs"><code>multibounce</code></a><img src="images/cornell.png"></td>
-    <td align="center"><a href="src/bin/julia.rs"><code>julia</code></a><img src="images/julia.png"></td>
+    <td align="center"><a href="src/bin/multibounce.rs"><img src="images/cornell.png"></a></td>
+    <td align="center"><a href="src/bin/julia.rs"><img src="images/julia.png"></a></td>
     </tr>
     <tr>
     <td align="center"><img src="images/volumetrics.png"></td>
-    <td align="center"><img src="images/pinhole-moving.avif"></td>
+    <td align="center"><a href="images/pinhole.png"><img src="images/pinhole-moving.avif"></a></td>
     </tr>
     <tr>
 </table>
 
-[My first version of HRC](https://github.com/entropylost/amitabha/blob/radial/src/main.rs) used one grid per direction in order to test the hypothesis that RC could resolve sharp shadows as long as the probe spacing perpendicular to the rays was small at all levels. It was not very efficient however.
+---
+
+[Radial HRC](https://github.com/entropylost/amitabha/blob/radial/src/main.rs) was an old implementation that used one grid per direction in order to test the hypothesis that RC could resolve sharp shadows so long as the probe spacing perpendicular to the rays was small at all levels.
 
 <table>
     <td align="center"><img src="images/radial.png"></td>
     <td align="center"><img src="images/radial-diagram.png"></td>
 </table>
+
+---
 
 Join the [Radiance Cascades Discord](https://discord.gg/EF9JfcEJPd) for more information and to discuss the algorithm!
