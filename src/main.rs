@@ -5,11 +5,12 @@ use std::f32::consts::TAU;
 
 use glam::UVec2;
 use glam::Vec2 as FVec2;
-use luisa::lang::types::vector::{Vec2, Vec3};
-use sefirot::prelude::*;
-use sefirot_testbed::App;
-use sefirot_testbed::KeyCode;
-use sefirot_testbed::MouseButton;
+use glam::Vec2Swizzles;
+use keter::prelude::*;
+use keter_testbed::App;
+use keter_testbed::KeyCode;
+use keter_testbed::MouseButton;
+use keter::lang::types::vector::{Vec2, Vec3};
 use utils::pcgf;
 
 mod utils;
@@ -206,7 +207,7 @@ fn main() {
     let grid_size = [2048, 2048];
     let app = App::new("Amitabha", grid_size)
         .scale(1)
-        .dpi(2.0)
+        // .dpi(2.0)
         .agx()
         .init();
 
@@ -409,7 +410,7 @@ fn main() {
     let mut is_tracing = false;
     let mut display_grid = false;
 
-    app.run(|rt, _scope| {
+    app.run(|rt| {
         if rt.just_pressed_key(KeyCode::Backslash) {
             is_tracing = !is_tracing;
         }
