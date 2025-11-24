@@ -1,4 +1,4 @@
-# Amitabha: Reference Implementation of Holographic Radiance Cascades
+# Amitābha: Reference Implementation of Holographic Radiance Cascades
 
 <img src="images/teaser.svg">
 
@@ -23,7 +23,7 @@ Other implementations:
     <tr>
 </table>
 
----
+## Radial HRC
 
 [Radial HRC](https://github.com/entropylost/amitabha/blob/radial/src/main.rs) was an old implementation that used one grid per direction in order to test the hypothesis that RC could resolve sharp shadows so long as the probe spacing perpendicular to the rays was small at all levels.
 

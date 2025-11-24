@@ -44,7 +44,6 @@ dependencies = [
 name = "amitabha"
 version = "0.1.0"
 dependencies = [
- "glam 0.27.0",
  "keter",
  "keter_testbed",
  "palette",
@@ -485,6 +484,7 @@ dependencies = [
 [[package]]
 name = "cuda_device_sys"
 version = "0.1.0"
+source = "git+https://github.com/entropylost/sefirot#4954c0dc9fa3a30750f937795cc1a3289ad32f0a"
 dependencies = [
  "bindgen 0.69.5",
 ]
@@ -687,18 +687,6 @@ dependencies = [
  "libc",
  "wasi",
 ]
-
-[[package]]
-name = "glam"
-version = "0.27.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9e05e7e6723e3455f4818c7b26e855439f7546cf617ef669d1adedb8669e5cb9"
-
-[[package]]
-name = "glam"
-version = "0.30.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f2d1aab06663bdce00d6ca5e5ed586ec8d18033a771906c993a1e3755b368d85"
 
 [[package]]
 name = "glob"
@@ -1007,6 +995,7 @@ checksum = "078e285eafdfb6c4b434e0d31e8cfcb5115b651496faca5749b88fafd4f23bfd"
 [[package]]
 name = "keter"
 version = "0.1.0"
+source = "git+https://github.com/entropylost/sefirot#4954c0dc9fa3a30750f937795cc1a3289ad32f0a"
 dependencies = [
  "cuda_device_sys",
  "indexmap 2.7.0",
@@ -1023,6 +1012,7 @@ dependencies = [
 [[package]]
 name = "keter_macro"
 version = "0.1.0"
+source = "git+https://github.com/entropylost/sefirot#4954c0dc9fa3a30750f937795cc1a3289ad32f0a"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1031,6 +1021,7 @@ dependencies = [
 [[package]]
 name = "keter_testbed"
 version = "0.1.0"
+source = "git+https://github.com/entropylost/sefirot#4954c0dc9fa3a30750f937795cc1a3289ad32f0a"
 dependencies = [
  "keter",
  "ndarray",
@@ -1119,7 +1110,6 @@ source = "git+https://github.com/entropylost/luisa-compute-rs?branch=main#ca3d96
 dependencies = [
  "bumpalo",
  "env_logger",
- "glam 0.30.5",
  "half",
  "indexmap 2.7.0",
  "lazy_static",

@@ -5,10 +5,8 @@ edition = "2021"
 default-run = "default"
 
 [dependencies]
-keter = { path = "https://github.com/entropylost/sefirot", features = [
-    "trace",
-] }
-keter_testbed = { path = "https://github.com/entropylost/sefirot", features = [
+keter = { git = "https://github.com/entropylost/sefirot", features = ["trace"] }
+keter_testbed = { git = "https://github.com/entropylost/sefirot", features = [
     "video",
 ] }
 palette = "0.7.6"
